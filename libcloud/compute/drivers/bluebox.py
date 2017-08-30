@@ -119,6 +119,8 @@ class BlueboxConnection(ConnectionUserAndKey):
     secure = True
     responseCls = BlueboxResponse
 
+    allow_insecure = False
+
     def add_default_headers(self, headers):
         user_b64 = base64.b64encode(b('%s:%s' % (self.user_id, self.key)))
         headers['Authorization'] = 'Basic %s' % (user_b64)
@@ -135,6 +137,7 @@ class BlueboxNodeDriver(NodeDriver):
     api_name = 'bluebox'
     name = 'Bluebox Blocks'
     website = 'http://bluebox.net'
+    features = {'create_node': ['ssh_key', 'password']}
 
     def list_nodes(self):
         result = self.connection.request('/api/blocks.json')
@@ -160,16 +163,12 @@ class BlueboxNodeDriver(NodeDriver):
 
     def create_node(self, **kwargs):
         headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-        size = kwargs["size"]
 
         name = kwargs['name']
         image = kwargs['image']
         size = kwargs['size']
 
-        try:
-            auth = kwargs['auth']
-        except Exception:
-            raise Exception("SSH public key or password required.")
+        auth = self._get_and_check_auth(kwargs.get('auth'))
 
         data = {
             'hostname': name,
@@ -197,6 +196,10 @@ class BlueboxNodeDriver(NodeDriver):
         result = self.connection.request('/api/blocks.json', headers=headers,
                                          data=params, method='POST')
         node = self._to_node(result.object)
+
+        if getattr(auth, "generated", False):
+            node.extra['password'] = auth.password
+
         return node
 
     def destroy_node(self, node):

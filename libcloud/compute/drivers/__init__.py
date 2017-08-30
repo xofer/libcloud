@@ -18,14 +18,17 @@ Drivers for working with different providers
 """
 
 __all__ = [
+    'abiquo',
     'brightbox',
     'bluebox',
+    'dimensiondata',
     'dummy',
     'ec2',
     'ecp',
     'elasticstack',
     'elastichosts',
     'cloudsigma',
+    'gce',
     'gogrid',
     'hostvirtual',
     'ibm_sce',
@@ -33,9 +36,9 @@ __all__ = [
     'opennebula',
     'rackspace',
     'rimuhosting',
-    'slicehost',
     'softlayer',
     'vcloud',
     'voxel',
     'vpsnet',
+    'onapp',
 ]

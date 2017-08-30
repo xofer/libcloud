@@ -18,24 +18,44 @@ import unittest
 from libcloud.utils.py3 import httplib
 
 from libcloud.common.types import LibcloudError
+from libcloud.compute.base import Node
 from libcloud.dns.types import RecordType, ZoneDoesNotExistError
 from libcloud.dns.types import RecordDoesNotExistError
-from libcloud.dns.drivers.rackspace import RackspaceUSDNSDriver
-from libcloud.dns.drivers.rackspace import RackspaceUKDNSDriver
+from libcloud.dns.drivers.rackspace import RackspacePTRRecord
+from libcloud.dns.drivers.rackspace import RackspaceDNSDriver
+from libcloud.loadbalancer.base import LoadBalancer
 
 from libcloud.test import MockHttp
 from libcloud.test.file_fixtures import DNSFileFixtures
 from libcloud.test.secrets import DNS_PARAMS_RACKSPACE
 
+# only the 'extra' will be looked at, so pass in minimal data
+RDNS_NODE = Node('370b0ff8-3f57-4e10-ac84-e9145ce005841', 'server1',
+                 None, [], [], None,
+                 extra={'uri': 'https://ord.servers.api.rackspacecloud'
+                               '.com/v2/905546514/servers/370b0ff8-3f57'
+                               '-4e10-ac84-e9145ce00584',
+                        'service_name': 'cloudServersOpenStack'})
+RDNS_LB = LoadBalancer('370b0ff8-3f57-4e10-ac84-e9145ce005841', 'server1',
+                       None, None, None, None,
+                       extra={'uri': 'https://ord.loadbalancers.api.'
+                                     'rackspacecloud.com/v2/905546514/'
+                                     'loadbalancers/370b0ff8-3f57-4e10-'
+                                     'ac84-e9145ce00584',
+                              'service_name': 'cloudLoadbalancers'})
+
 
 class RackspaceUSTests(unittest.TestCase):
-    klass = RackspaceUSDNSDriver
+    klass = RackspaceDNSDriver
+    endpoint_url = 'https://dns.api.rackspacecloud.com/v1.0/11111'
+    region = 'us'
 
     def setUp(self):
-        self.klass.connectionCls.conn_classes = (
-                None, RackspaceMockHttp)
+        self.klass.connectionCls.conn_class = RackspaceMockHttp
         RackspaceMockHttp.type = None
-        self.driver = self.klass(*DNS_PARAMS_RACKSPACE)
+
+        driver_kwargs = {'region': self.region}
+        self.driver = self.klass(*DNS_PARAMS_RACKSPACE, **driver_kwargs)
         self.driver.connection.poll_interval = 0.0
         # normally authentication happens lazily, but we force it here
         self.driver.connection._populate_hosts_and_request_paths()
@@ -48,10 +68,10 @@ class RackspaceUSTests(unittest.TestCase):
         driver = self.klass(*DNS_PARAMS_RACKSPACE, **kwargs)
         driver.list_zones()
 
-        self.assertEquals(kwargs['ex_force_auth_token'],
-            driver.connection.auth_token)
-        self.assertEquals('/v1.0/11111',
-            driver.connection.request_path)
+        self.assertEqual(kwargs['ex_force_auth_token'],
+                         driver.connection.auth_token)
+        self.assertEqual('/v1.0/11111',
+                         driver.connection.request_path)
 
     def test_force_auth_url_kwargs(self):
         kwargs = {
@@ -60,22 +80,21 @@ class RackspaceUSTests(unittest.TestCase):
         }
         driver = self.klass(*DNS_PARAMS_RACKSPACE, **kwargs)
 
-        self.assertEquals(kwargs['ex_force_auth_url'],
-            driver.connection._ex_force_auth_url)
-        self.assertEquals(kwargs['ex_force_auth_version'],
-            driver.connection._auth_version)
+        self.assertEqual(kwargs['ex_force_auth_url'],
+                         driver.connection._ex_force_auth_url)
+        self.assertEqual(kwargs['ex_force_auth_version'],
+                         driver.connection._auth_version)
 
     def test_gets_auth_2_0_endpoint(self):
-        kwargs = {'ex_force_auth_version': '2.0_password'}
+        kwargs = {'ex_force_auth_version': '2.0_password', 'region': self.region}
         driver = self.klass(*DNS_PARAMS_RACKSPACE, **kwargs)
         driver.connection._populate_hosts_and_request_paths()
 
-        self.assertEquals('https://dns.api.rackspacecloud.com/v1.0/11111',
-            driver.connection.get_endpoint())
+        self.assertEqual(self.endpoint_url, driver.connection.get_endpoint())
 
     def test_list_record_types(self):
         record_types = self.driver.list_record_types()
-        self.assertEqual(len(record_types), 7)
+        self.assertEqual(len(record_types), 8)
         self.assertTrue(RecordType.A in record_types)
 
     def test_list_zones_success(self):
@@ -109,6 +128,7 @@ class RackspaceUSTests(unittest.TestCase):
         self.assertEqual(records[0].type, RecordType.A)
         self.assertEqual(records[0].data, '127.7.7.7')
         self.assertEqual(records[0].extra['ttl'], 777)
+        self.assertEqual(records[0].extra['comment'], 'lulz')
         self.assertEqual(records[0].extra['fqdn'], 'test3.%s' %
                          (records[0].zone.domain))
 
@@ -200,8 +220,8 @@ class RackspaceUSTests(unittest.TestCase):
         except Exception:
             e = sys.exc_info()[1]
             self.assertEqual(str(e), 'Validation errors: Domain TTL is ' +
-                                      'required and must be greater than ' +
-                                      'or equal to 300')
+                                     'required and must be greater than ' +
+                                     'or equal to 300')
         else:
             self.fail('Exception was not thrown')
 
@@ -299,35 +319,100 @@ class RackspaceUSTests(unittest.TestCase):
     def test_to_full_record_name_name_provided(self):
         domain = 'foo.bar'
         name = 'test'
-        self.assertEquals(self.driver._to_full_record_name(domain, name),
-                          'test.foo.bar')
+        self.assertEqual(self.driver._to_full_record_name(domain, name),
+                         'test.foo.bar')
 
     def test_to_full_record_name_name_not_provided(self):
         domain = 'foo.bar'
         name = None
-        self.assertEquals(self.driver._to_full_record_name(domain, name),
-                          'foo.bar')
+        self.assertEqual(self.driver._to_full_record_name(domain, name),
+                         'foo.bar')
+
+    def test_to_partial_record_name(self):
+        domain = 'example.com'
+        names = ['test.example.com', 'foo.bar.example.com',
+                 'example.com.example.com', 'example.com']
+        expected_values = ['test', 'foo.bar', 'example.com', None]
+
+        for name, expected_value in zip(names, expected_values):
+            value = self.driver._to_partial_record_name(domain=domain,
+                                                        name=name)
+            self.assertEqual(value, expected_value)
+
+    def test_ex_create_ptr_success(self):
+        ip = '127.1.1.1'
+        domain = 'www.foo4.bar.com'
+        record = self.driver.ex_create_ptr_record(RDNS_NODE, ip, domain)
+        self.assertEqual(record.ip, ip)
+        self.assertEqual(record.domain, domain)
+        self.assertEqual(record.extra['uri'], RDNS_NODE.extra['uri'])
+        self.assertEqual(record.extra['service_name'],
+                         RDNS_NODE.extra['service_name'])
+
+        self.driver.ex_create_ptr_record(RDNS_LB, ip, domain)
+
+    def test_ex_list_ptr_success(self):
+        records = self.driver.ex_iterate_ptr_records(RDNS_NODE)
+        for record in records:
+            self.assertTrue(isinstance(record, RackspacePTRRecord))
+            self.assertEqual(record.type, RecordType.PTR)
+            self.assertEqual(record.extra['uri'], RDNS_NODE.extra['uri'])
+            self.assertEqual(record.extra['service_name'],
+                             RDNS_NODE.extra['service_name'])
+
+    def test_ex_list_ptr_not_found(self):
+        RackspaceMockHttp.type = 'RECORD_DOES_NOT_EXIST'
+
+        try:
+            records = self.driver.ex_iterate_ptr_records(RDNS_NODE)
+        except Exception as exc:
+            self.fail("PTR Records list 404 threw %s" % exc)
+
+        try:
+            next(records)
+            self.fail("PTR Records list 404 did not produce an empty list")
+        except StopIteration:
+            self.assertTrue(True, "Got empty list on 404")
+
+    def text_ex_get_ptr_success(self):
+        service_name = 'cloudServersOpenStack'
+        records = self.driver.ex_iterate_ptr_records(service_name)
+        original = next(records)
+        found = self.driver.ex_get_ptr_record(service_name, original.id)
+        for attr in dir(original):
+            self.assertEqual(getattr(found, attr), getattr(original, attr))
+
+    def text_update_ptr_success(self):
+        records = self.driver.ex_iterate_ptr_records(RDNS_NODE)
+        original = next(records)
+
+        updated = self.driver.ex_update_ptr_record(original,
+                                                   domain=original.domain)
+        self.assertEqual(original.id, updated.id)
+
+        extra_update = {'ttl': original.extra['ttl']}
+        updated = self.driver.ex_update_ptr_record(original,
+                                                   extra=extra_update)
+        self.assertEqual(original.id, updated.id)
+
+        updated = self.driver.ex_update_ptr_record(original, 'new-domain')
+        self.assertEqual(original.id, updated.id)
+
+    def test_ex_delete_ptr_success(self):
+        records = self.driver.ex_iterate_ptr_records(RDNS_NODE)
+        original = next(records)
+        self.assertTrue(self.driver.ex_delete_ptr_record(original))
 
 
-class RackspaceUK1Tests(RackspaceUSTests):
-    klass = RackspaceUKDNSDriver
+class RackspaceUKTests(RackspaceUSTests):
+    klass = RackspaceDNSDriver
+    endpoint_url = 'https://lon.dns.api.rackspacecloud.com/v1.0/11111'
+    region = 'uk'
 
 
 class RackspaceMockHttp(MockHttp):
     fixtures = DNSFileFixtures('rackspace')
     base_headers = {'content-type': 'application/json'}
-
-
-    def _v1_1_auth(self, method, url, body, headers):
-        body = self.fixtures.load('auth_1_1.json')
-        # fake auth token response
-        headers = {'content-length': '657', 'vary': 'Accept,Accept-Encoding',
-                   'server': 'Apache/2.2.13 (Red Hat)',
-                   'connection': 'Keep-Alive',
-                   'date': 'Sat, 29 Oct 2011 19:29:45 GMT',
-                   'content-type': 'application/json'}
-        return (httplib.OK, body, headers,
-                httplib.responses[httplib.OK])
 
     def _v2_0_tokens(self, method, url, body, headers):
         body = self.fixtures.load('auth_2_0.json')
@@ -359,7 +444,7 @@ class RackspaceMockHttp(MockHttp):
             # Async - update_zone
             body = self.fixtures.load('update_zone_success.json')
         elif method == 'DELETE':
-            # Aync - delete_zone
+            # Async - delete_zone
             body = self.fixtures.load('delete_zone_success.json')
 
         return (httplib.OK, body, self.base_headers,
@@ -411,8 +496,7 @@ class RackspaceMockHttp(MockHttp):
         return (httplib.OK, body, self.base_headers,
                 httplib.responses[httplib.OK])
 
-    def _v1_0_11111_domains_12345678_records_28536_RECORD_DOES_NOT_EXIST(self,
-            method, url, body, headers):
+    def _v1_0_11111_domains_12345678_records_28536_RECORD_DOES_NOT_EXIST(self, method, url, body, headers):
         body = self.fixtures.load('does_not_exist.json')
         return (httplib.NOT_FOUND, body, self.base_headers,
                 httplib.responses[httplib.NOT_FOUND])
@@ -423,8 +507,7 @@ class RackspaceMockHttp(MockHttp):
         return (httplib.OK, body, self.base_headers,
                 httplib.responses[httplib.OK])
 
-    def _v1_0_11111_status_288795f9_e74d_48be_880b_a9e36e0de61e_CREATE_ZONE(self,
-            method, url, body, headers):
+    def _v1_0_11111_status_288795f9_e74d_48be_880b_a9e36e0de61e_CREATE_ZONE(self, method, url, body, headers):
         # Async status - create_zone
         body = self.fixtures.load('create_zone_success.json')
         return (httplib.OK, body, self.base_headers,
@@ -485,6 +568,41 @@ class RackspaceMockHttp(MockHttp):
         body = self.fixtures.load('does_not_exist.json')
         return (httplib.NOT_FOUND, body, self.base_headers,
                 httplib.responses[httplib.NOT_FOUND])
+
+    def _v1_0_11111_rdns_cloudServersOpenStack(self, method, url, body, headers):
+        if method == 'DELETE':
+            body = self.fixtures.load('delete_ptr_record_success.json')
+            return (httplib.OK, body, self.base_headers,
+                    httplib.responses[httplib.OK])
+        else:
+            body = self.fixtures.load('list_ptr_records_success.json')
+            return (httplib.OK, body, self.base_headers,
+                    httplib.responses[httplib.OK])
+
+    def _v1_0_11111_rdns_cloudServersOpenStack_RECORD_DOES_NOT_EXIST(self, method, url, body, headers):
+        body = self.fixtures.load('does_not_exist.json')
+        return (httplib.NOT_FOUND, body, self.base_headers,
+                httplib.responses[httplib.NOT_FOUND])
+
+    def _v1_0_11111_rdns_cloudServersOpenStack_PTR_7423034(self, method, url, body, headers):
+        body = self.fixtures.load('get_ptr_record_success.json')
+        return (httplib.OK, body, self.base_headers,
+                httplib.responses[httplib.OK])
+
+    def _v1_0_11111_rdns(self, method, url, body, headers):
+        body = self.fixtures.load('create_ptr_record_success.json')
+        return (httplib.OK, body, self.base_headers,
+                httplib.responses[httplib.OK])
+
+    def _v1_0_11111_status_12345678_5739_43fb_8939_f3a2c4c0e99c(self, method, url, body, headers):
+        body = self.fixtures.load('create_ptr_record_success.json')
+        return (httplib.OK, body, self.base_headers,
+                httplib.responses[httplib.OK])
+
+    def _v1_0_11111_status_12345678_2e5d_490f_bb6e_fdc65d1118a9(self, method, url, body, headers):
+        body = self.fixtures.load('delete_ptr_record_success.json')
+        return (httplib.OK, body, self.base_headers,
+                httplib.responses[httplib.OK])
 
 
 if __name__ == '__main__':

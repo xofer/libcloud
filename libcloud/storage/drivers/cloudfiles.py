@@ -48,11 +48,14 @@ from libcloud.storage.types import InvalidContainerNameError
 from libcloud.common.openstack import OpenStackBaseConnection
 from libcloud.common.openstack import OpenStackDriverMixin
 
-from libcloud.common.rackspace import (
-    AUTH_URL_US, AUTH_URL_UK)
+from libcloud.common.rackspace import AUTH_URL
 
 CDN_HOST = 'cdn.clouddrive.com'
 API_VERSION = 'v1.0'
+
+# Keys which are used to select a correct endpoint from the service catalog.
+INTERNAL_ENDPOINT_KEY = 'internalURL'
+PUBLIC_ENDPOINT_KEY = 'publicURL'
 
 
 class CloudFilesResponse(Response):
@@ -96,7 +99,73 @@ class CloudFilesRawResponse(CloudFilesResponse, RawResponse):
     pass
 
 
-class CloudFilesConnection(OpenStackBaseConnection):
+class OpenStackSwiftConnection(OpenStackBaseConnection):
+    """
+    Connection class for the OpenStack Swift endpoint.
+    """
+
+    responseCls = CloudFilesResponse
+    rawResponseCls = CloudFilesRawResponse
+
+    auth_url = AUTH_URL
+    _auth_version = '1.0'
+
+    # TODO: Reverse the relationship - Swift -> CloudFiles
+    def __init__(self, user_id, key, secure=True, **kwargs):
+        # Ignore this for now
+        kwargs.pop('use_internal_url', None)
+        super(OpenStackSwiftConnection, self).__init__(user_id, key,
+                                                       secure=secure,
+                                                       **kwargs)
+        self.api_version = API_VERSION
+        self.accept_format = 'application/json'
+
+        self._service_type = self._ex_force_service_type or 'object-store'
+        self._service_name = self._ex_force_service_name or 'swift'
+
+        if self._ex_force_service_region:
+            self._service_region = self._ex_force_service_region
+        else:
+            self._service_region = None
+
+    def get_endpoint(self, *args, **kwargs):
+        if ('2.0' in self._auth_version) or ('3.x' in self._auth_version):
+            endpoint = self.service_catalog.get_endpoint(
+                service_type=self._service_type,
+                name=self._service_name,
+                region=self._service_region)
+        elif ('1.1' in self._auth_version) or ('1.0' in self._auth_version):
+            endpoint = self.service_catalog.get_endpoint(
+                name=self._service_name, region=self._service_region)
+        else:
+            endpoint = None
+
+        if endpoint:
+            return endpoint.url
+        else:
+            raise LibcloudError('Could not find specified endpoint')
+
+    def request(self, action, params=None, data='', headers=None, method='GET',
+                raw=False, cdn_request=False):
+        if not headers:
+            headers = {}
+        if not params:
+            params = {}
+
+        self.cdn_request = cdn_request
+        params['format'] = 'json'
+
+        if method in ['POST', 'PUT'] and 'Content-Type' not in headers:
+            headers.update({'Content-Type': 'application/json; charset=UTF-8'})
+
+        return super(OpenStackSwiftConnection, self).request(
+            action=action,
+            params=params, data=data,
+            method=method, headers=headers,
+            raw=raw)
+
+
+class CloudFilesConnection(OpenStackSwiftConnection):
     """
     Base connection class for the Cloudfiles driver.
     """
@@ -104,46 +173,49 @@ class CloudFilesConnection(OpenStackBaseConnection):
     responseCls = CloudFilesResponse
     rawResponseCls = CloudFilesRawResponse
 
-    def __init__(self, user_id, key, secure=True, auth_url=AUTH_URL_US,
-                 **kwargs):
+    auth_url = AUTH_URL
+    _auth_version = '2.0'
+
+    def __init__(self, user_id, key, secure=True,
+                 use_internal_url=False, **kwargs):
         super(CloudFilesConnection, self).__init__(user_id, key, secure=secure,
                                                    **kwargs)
-        self.auth_url = auth_url
         self.api_version = API_VERSION
         self.accept_format = 'application/json'
         self.cdn_request = False
+        self.use_internal_url = use_internal_url
 
     def get_endpoint(self):
-        # First, we parse out both files and cdn endpoints
-        # for each auth version
+        region = self._ex_force_service_region.upper()
+
+        if self.use_internal_url:
+            endpoint_type = 'internal'
+        else:
+            endpoint_type = 'external'
+
         if '2.0' in self._auth_version:
-            eps = self.service_catalog.get_endpoints(
+            ep = self.service_catalog.get_endpoint(
                 service_type='object-store',
-                name='cloudFiles')
-            cdn_eps = self.service_catalog.get_endpoints(
-                service_type='object-store',
-                name='cloudFilesCDN')
-        elif ('1.1' in self._auth_version) or ('1.0' in self._auth_version):
-            eps = self.service_catalog.get_endpoints(name='cloudFiles')
-            cdn_eps = self.service_catalog.get_endpoints(name='cloudFilesCDN')
+                name='cloudFiles',
+                region=region,
+                endpoint_type=endpoint_type)
+            cdn_ep = self.service_catalog.get_endpoint(
+                service_type='rax:object-cdn',
+                name='cloudFilesCDN',
+                region=region,
+                endpoint_type=endpoint_type)
+        else:
+            raise LibcloudError(
+                'Auth version "%s" not supported' % (self._auth_version))
 
         # if this is a CDN request, return the cdn url instead
         if self.cdn_request:
-            eps = cdn_eps
+            ep = cdn_ep
 
-        if self._ex_force_service_region:
-            eps = [ep for ep in eps if ep['region'].lower() == self._ex_force_service_region.lower()]
-
-        if len(eps) == 0:
-            # TODO: Better error message
+        if not ep or not ep.url:
             raise LibcloudError('Could not find specified endpoint')
 
-        ep = eps[0]
-
-        if 'publicURL' in ep:
-            return ep['publicURL']
-        else:
-            raise LibcloudError('Could not find specified endpoint')
+        return ep.url
 
     def request(self, action, params=None, data='', headers=None, method='GET',
                 raw=False, cdn_request=False):
@@ -162,32 +234,7 @@ class CloudFilesConnection(OpenStackBaseConnection):
             action=action,
             params=params, data=data,
             method=method, headers=headers,
-            raw=raw)
-
-
-class CloudFilesSwiftConnection(CloudFilesConnection):
-    """
-    Connection class for the Cloudfiles Swift endpoint.
-    """
-
-    def __init__(self, *args, **kwargs):
-        self.region_name = kwargs.pop('ex_region_name', None)
-        super(CloudFilesSwiftConnection, self).__init__(*args, **kwargs)
-
-    def get_endpoint(self, *args, **kwargs):
-        if '2.0' in self._auth_version:
-            endpoint = self.service_catalog.get_endpoint(
-                service_type='object-store',
-                name='swift',
-                region=self.region_name)
-        elif ('1.1' in self._auth_version) or ('1.0' in self._auth_version):
-            endpoint = self.service_catalog.get_endpoint(
-                name='swift', region=self.region_name)
-
-        if 'publicURL' in endpoint:
-            return endpoint['publicURL']
-        else:
-            raise LibcloudError('Could not find specified endpoint')
+            raw=raw, cdn_request=cdn_request)
 
 
 class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
@@ -202,26 +249,27 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
     supports_chunked_encoding = True
 
     def __init__(self, key, secret=None, secure=True, host=None, port=None,
-                 datacenter='ord', **kwargs):
+                 region='ord', use_internal_url=False, **kwargs):
         """
-        @inherits:  L{StorageDriver.__init__}
+        @inherits:  :class:`StorageDriver.__init__`
 
-        @param datacenter: Datacenter ID which should be used.
-        @type datacenter: C{str}
+        :param region: ID of the region which should be used.
+        :type region: ``str``
         """
-        if hasattr(self, '_datacenter'):
-            datacenter = self._datacenter
-
         # This is here for backard compatibility
         if 'ex_force_service_region' in kwargs:
-            datacenter = kwargs['ex_force_service_region']
+            region = kwargs['ex_force_service_region']
 
-        self.datacenter = datacenter
-
-        OpenStackDriverMixin.__init__(self, (), **kwargs)
+        self.use_internal_url = use_internal_url
+        OpenStackDriverMixin.__init__(self, **kwargs)
         super(CloudFilesStorageDriver, self).__init__(key=key, secret=secret,
-                                            secure=secure, host=host,
-                                            port=port, **kwargs)
+                                                      secure=secure, host=host,
+                                                      port=port, region=region,
+                                                      **kwargs)
+
+    @classmethod
+    def list_regions(cls):
+        return ['ord', 'dfw', 'iad', 'lon', 'hkg', 'syd']
 
     def iterate_containers(self):
         response = self.connection.request('')
@@ -234,7 +282,8 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         raise LibcloudError('Unexpected status code: %s' % (response.status))
 
     def get_container(self, container_name):
-        response = self.connection.request('/%s' % (container_name),
+        container_name_encoded = self._encode_container_name(container_name)
+        response = self.connection.request('/%s' % (container_name_encoded),
                                            method='HEAD')
 
         if response.status == httplib.NO_CONTENT:
@@ -248,8 +297,11 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
 
     def get_object(self, container_name, object_name):
         container = self.get_container(container_name)
-        response = self.connection.request('/%s/%s' % (container_name,
-                                                       object_name),
+        container_name_encoded = self._encode_container_name(container_name)
+        object_name_encoded = self._encode_object_name(object_name)
+
+        response = self.connection.request('/%s/%s' % (container_name_encoded,
+                                                       object_name_encoded),
                                            method='HEAD')
         if response.status in [httplib.OK, httplib.NO_CONTENT]:
             obj = self._headers_to_object(
@@ -260,18 +312,22 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
 
         raise LibcloudError('Unexpected status code: %s' % (response.status))
 
-    def get_container_cdn_url(self, container):
-        container_name = container.name
-        response = self.connection.request('/%s' % (container_name),
+    def get_container_cdn_url(self, container, ex_ssl_uri=False):
+        # pylint: disable=unexpected-keyword-arg
+        container_name_encoded = self._encode_container_name(container.name)
+        response = self.connection.request('/%s' % (container_name_encoded),
                                            method='HEAD',
                                            cdn_request=True)
 
         if response.status == httplib.NO_CONTENT:
-            cdn_url = response.headers['x-cdn-uri']
+            if ex_ssl_uri:
+                cdn_url = response.headers['x-cdn-ssl-uri']
+            else:
+                cdn_url = response.headers['x-cdn-uri']
             return cdn_url
         elif response.status == httplib.NOT_FOUND:
             raise ContainerDoesNotExistError(value='',
-                                             container_name=container_name,
+                                             container_name=container.name,
                                              driver=self)
 
         raise LibcloudError('Unexpected status code: %s' % (response.status))
@@ -282,17 +338,18 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
 
     def enable_container_cdn(self, container, ex_ttl=None):
         """
-        @inherits: L{StorageDriver.enable_container_cdn}
+        @inherits: :class:`StorageDriver.enable_container_cdn`
 
-        @param ex_ttl: cache time to live
-        @type ex_ttl: C{int}
+        :param ex_ttl: cache time to live
+        :type ex_ttl: ``int``
         """
-        container_name = container.name
+        container_name = self._encode_container_name(container.name)
         headers = {'X-CDN-Enabled': 'True'}
 
         if ex_ttl:
             headers['X-TTL'] = ex_ttl
 
+        # pylint: disable=unexpected-keyword-arg
         response = self.connection.request('/%s' % (container_name),
                                            method='PUT',
                                            headers=headers,
@@ -301,9 +358,9 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         return response.status in [httplib.CREATED, httplib.ACCEPTED]
 
     def create_container(self, container_name):
-        container_name = self._clean_container_name(container_name)
+        container_name_encoded = self._encode_container_name(container_name)
         response = self.connection.request(
-            '/%s' % (container_name), method='PUT')
+            '/%s' % (container_name_encoded), method='PUT')
 
         if response.status == httplib.CREATED:
             # Accepted mean that container is not yet created but it will be
@@ -320,7 +377,7 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         raise LibcloudError('Unexpected status code: %s' % (response.status))
 
     def delete_container(self, container):
-        name = self._clean_container_name(container.name)
+        name = self._encode_container_name(container.name)
 
         # Only empty container can be deleted
         response = self.connection.request('/%s' % (name), method='DELETE')
@@ -366,37 +423,30 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
                                 success_status_code=httplib.OK)
 
     def upload_object(self, file_path, container, object_name, extra=None,
-                      verify_hash=True):
+                      verify_hash=True, headers=None):
         """
         Upload an object.
 
         Note: This will override file with a same name if it already exists.
         """
-        upload_func = self._upload_file
-        upload_func_kwargs = {'file_path': file_path}
 
         return self._put_object(container=container, object_name=object_name,
-                                upload_func=upload_func,
-                                upload_func_kwargs=upload_func_kwargs,
                                 extra=extra, file_path=file_path,
-                                verify_hash=verify_hash)
+                                verify_hash=verify_hash, headers=headers)
 
     def upload_object_via_stream(self, iterator,
-                                 container, object_name, extra=None):
+                                 container, object_name, extra=None,
+                                 headers=None):
         if isinstance(iterator, file):
             iterator = iter(iterator)
 
-        upload_func = self._stream_data
-        upload_func_kwargs = {'iterator': iterator}
-
         return self._put_object(container=container, object_name=object_name,
-                                upload_func=upload_func,
-                                upload_func_kwargs=upload_func_kwargs,
-                                extra=extra, iterator=iterator)
+                                extra=extra, stream=iterator,
+                                headers=headers)
 
     def delete_object(self, obj):
-        container_name = self._clean_container_name(obj.container.name)
-        object_name = self._clean_object_name(obj.name)
+        container_name = self._encode_container_name(obj.container.name)
+        object_name = self._encode_object_name(obj.name)
 
         response = self.connection.request(
             '/%s/%s' % (container_name, object_name), method='DELETE')
@@ -413,14 +463,15 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         """
         Purge edge cache for the specified object.
 
-        @param email: Email where a notification will be sent when the job
+        :param email: Email where a notification will be sent when the job
         completes. (optional)
-        @type email: C{str}
+        :type email: ``str``
         """
-        container_name = self._clean_container_name(obj.container.name)
-        object_name = self._clean_object_name(obj.name)
+        container_name = self._encode_container_name(obj.container.name)
+        object_name = self._encode_object_name(obj.name)
         headers = {'X-Purge-Email': email} if email else {}
 
+        # pylint: disable=unexpected-keyword-arg
         response = self.connection.request('/%s/%s' % (container_name,
                                                        object_name),
                                            method='DELETE',
@@ -433,7 +484,7 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         """
         Get meta data
 
-        @rtype: C{dict}
+        :rtype: ``dict``
         """
         response = self.connection.request('', method='HEAD')
 
@@ -480,18 +531,19 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         """
         Enable serving a static website.
 
-        @param container: Container instance
-        @type container: L{Container}
+        :param container: Container instance
+        :type container: :class:`Container`
 
-        @param index_file: Name of the object which becomes an index page for
+        :param index_file: Name of the object which becomes an index page for
         every sub-directory in this container.
-        @type index_file: C{str}
+        :type index_file: ``str``
 
-        @rtype: C{bool}
+        :rtype: ``bool``
         """
         container_name = container.name
         headers = {'X-Container-Meta-Web-Index': index_file}
 
+        # pylint: disable=unexpected-keyword-arg
         response = self.connection.request('/%s' % (container_name),
                                            method='POST',
                                            headers=headers,
@@ -504,17 +556,18 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         Set a custom error page which is displayed if file is not found and
         serving of a static website is enabled.
 
-        @param container: Container instance
-        @type container: L{Container}
+        :param container: Container instance
+        :type container: :class:`Container`
 
-        @param file_name: Name of the object which becomes the error page.
-        @type file_name: C{str}
+        :param file_name: Name of the object which becomes the error page.
+        :type file_name: ``str``
 
-        @rtype: C{bool}
+        :rtype: ``bool``
         """
         container_name = container.name
         headers = {'X-Container-Meta-Web-Error': file_name}
 
+        # pylint: disable=unexpected-keyword-arg
         response = self.connection.request('/%s' % (container_name),
                                            method='POST',
                                            headers=headers,
@@ -527,13 +580,14 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         Set the metadata header X-Account-Meta-Temp-URL-Key on your Cloud
         Files account.
 
-        @param key: X-Account-Meta-Temp-URL-Key
-        @type key: C{str}
+        :param key: X-Account-Meta-Temp-URL-Key
+        :type key: ``str``
 
-        @rtype: C{bool}
+        :rtype: ``bool``
         """
         headers = {'X-Account-Meta-Temp-URL-Key': key}
 
+        # pylint: disable=unexpected-keyword-arg
         response = self.connection.request('',
                                            method='POST',
                                            headers=headers,
@@ -549,18 +603,19 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         wish.  This method is specifically for allowing users to retrieve
         or update an object.
 
-        @param obj: The object that you wish to make temporarily public
-        @type obj: L{Object}
+        :param obj: The object that you wish to make temporarily public
+        :type obj: :class:`Object`
 
-        @param method: Which method you would like to allow, 'PUT' or 'GET'
-        @type method: C{str}
+        :param method: Which method you would like to allow, 'PUT' or 'GET'
+        :type method: ``str``
 
-        @param timeout: Time (in seconds) after which you want the TempURL
+        :param timeout: Time (in seconds) after which you want the TempURL
         to expire.
-        @type timeout: C{int}
+        :type timeout: ``int``
 
-        @rtype: C{bool}
+        :rtype: ``bool``
         """
+        # pylint: disable=no-member
         self.connection._populate_hosts_and_request_paths()
         expires = int(time() + timeout)
         path = '%s/%s/%s' % (self.connection.request_path,
@@ -587,16 +642,12 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
 
     def _upload_object_part(self, container, object_name, part_number,
                             iterator, verify_hash=True):
-        upload_func = self._stream_data
-        upload_func_kwargs = {'iterator': iterator}
         part_name = object_name + '/%08d' % part_number
         extra = {'content_type': 'application/octet-stream'}
 
         self._put_object(container=container,
                          object_name=part_name,
-                         upload_func=upload_func,
-                         upload_func_kwargs=upload_func_kwargs,
-                         extra=extra, iterator=iterator,
+                         extra=extra, stream=iterator,
                          verify_hash=verify_hash)
 
     def _upload_object_manifest(self, container, object_name, extra=None,
@@ -604,14 +655,15 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         extra = extra or {}
         meta_data = extra.get('meta_data')
 
-        container_name_cleaned = self._clean_container_name(container.name)
-        object_name_cleaned = self._clean_object_name(object_name)
-        request_path = '/%s/%s' % (container_name_cleaned, object_name_cleaned)
+        container_name_encoded = self._encode_container_name(container.name)
+        object_name_encoded = self._encode_object_name(object_name)
+        request_path = '/%s/%s' % (container_name_encoded, object_name_encoded)
 
+        # pylint: disable=no-member
         headers = {'X-Auth-Token': self.connection.auth_token,
                    'X-Object-Manifest': '%s/%s/' %
-                                        (container_name_cleaned,
-                                         object_name_cleaned)}
+                                        (container_name_encoded,
+                                         object_name_encoded)}
 
         data = ''
         response = self.connection.request(request_path,
@@ -638,11 +690,44 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
 
         return obj
 
-    def iterate_container_objects(self, container):
+    def list_container_objects(self, container, ex_prefix=None):
+        """
+        Return a list of objects for the given container.
+
+        :param container: Container instance.
+        :type container: :class:`Container`
+
+        :param ex_prefix: Only get objects with names starting with ex_prefix
+        :type ex_prefix: ``str``
+
+        :return: A list of Object instances.
+        :rtype: ``list`` of :class:`Object`
+        """
+        return list(self.iterate_container_objects(container,
+                                                   ex_prefix=ex_prefix))
+
+    def iterate_container_objects(self, container, ex_prefix=None):
+        """
+        Return a generator of objects for the given container.
+
+        :param container: Container instance
+        :type container: :class:`Container`
+
+        :param ex_prefix: Only get objects with names starting with ex_prefix
+        :type ex_prefix: ``str``
+
+        :return: A generator of Object instances.
+        :rtype: ``generator`` of :class:`Object`
+        """
         params = {}
+        if ex_prefix:
+            params['prefix'] = ex_prefix
 
         while True:
-            response = self.connection.request('/%s' % (container.name),
+            container_name_encoded = \
+                self._encode_container_name(container.name)
+            response = self.connection.request('/%s' %
+                                               (container_name_encoded),
                                                params=params)
 
             if response.status == httplib.NO_CONTENT:
@@ -663,29 +748,31 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
                 raise LibcloudError('Unexpected status code: %s' %
                                     (response.status))
 
-    def _put_object(self, container, object_name, upload_func,
-                    upload_func_kwargs, extra=None, file_path=None,
-                    iterator=None, verify_hash=True):
+    def _put_object(self, container, object_name, extra=None, file_path=None,
+                    stream=None, verify_hash=True, headers=None):
         extra = extra or {}
-        container_name_cleaned = self._clean_container_name(container.name)
-        object_name_cleaned = self._clean_object_name(object_name)
+        container_name_encoded = self._encode_container_name(container.name)
+        object_name_encoded = self._encode_object_name(object_name)
         content_type = extra.get('content_type', None)
         meta_data = extra.get('meta_data', None)
+        content_disposition = extra.get('content_disposition', None)
 
-        headers = {}
+        headers = headers or {}
         if meta_data:
             for key, value in list(meta_data.items()):
                 key = 'X-Object-Meta-%s' % (key)
                 headers[key] = value
 
-        request_path = '/%s/%s' % (container_name_cleaned, object_name_cleaned)
+        if content_disposition is not None:
+            headers['Content-Disposition'] = content_disposition
+
+        request_path = '/%s/%s' % (container_name_encoded, object_name_encoded)
         result_dict = self._upload_object(
             object_name=object_name, content_type=content_type,
-            upload_func=upload_func, upload_func_kwargs=upload_func_kwargs,
             request_path=request_path, request_method='PUT',
-            headers=headers, file_path=file_path, iterator=iterator)
+            headers=headers, file_path=file_path, stream=stream)
 
-        response = result_dict['response'].response
+        response = result_dict['response']
         bytes_transferred = result_dict['bytes_transferred']
         server_hash = result_dict['response'].headers.get('etag', None)
 
@@ -712,9 +799,9 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
             raise LibcloudError('status_code=%s' % (response.status),
                                 driver=self)
 
-    def _clean_container_name(self, name):
+    def _encode_container_name(self, name):
         """
-        Clean container name.
+        Encode container name so it can be used as part of the HTTP request.
         """
         if name.startswith('/'):
             name = name[1:]
@@ -732,12 +819,12 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
 
         return name
 
-    def _clean_object_name(self, name):
+    def _encode_object_name(self, name):
         name = urlquote(name)
         return name
 
     def _to_container_list(self, response):
-        # @TODO: Handle more then 10k containers - use "lazy list"?
+        # @TODO: Handle more than 10k containers - use "lazy list"?
         for container in response:
             extra = {'object_count': int(container['count']),
                      'size': int(container['bytes'])}
@@ -786,54 +873,31 @@ class CloudFilesStorageDriver(StorageDriver, OpenStackDriverMixin):
         return obj
 
     def _ex_connection_class_kwargs(self):
-        kwargs = {'ex_force_service_region': self.datacenter}
-
-        if self.datacenter in ['dfw', 'ord']:
-            kwargs['auth_url'] = AUTH_URL_US
-        elif self.datacenter == 'lon':
-            kwargs['auth_url'] = AUTH_URL_UK
-
-        kwargs.update(self.openstack_connection_kwargs())
+        kwargs = self.openstack_connection_kwargs()
+        kwargs['ex_force_service_region'] = self.region
+        kwargs['use_internal_url'] = self.use_internal_url
         return kwargs
 
 
-class CloudFilesUSStorageDriver(CloudFilesStorageDriver):
+class OpenStackSwiftStorageDriver(CloudFilesStorageDriver):
     """
-    Cloudfiles storage driver for the US endpoint.
-    """
-
-    type = Provider.CLOUDFILES_US
-    name = 'CloudFiles (US)'
-    _datacenter = 'ord'
-
-
-class CloudFilesSwiftStorageDriver(CloudFilesStorageDriver):
-    """
-    Cloudfiles storage driver for the OpenStack Swift.
+    Storage driver for the OpenStack Swift.
     """
     type = Provider.CLOUDFILES_SWIFT
-    name = 'CloudFiles (SWIFT)'
-    connectionCls = CloudFilesSwiftConnection
+    name = 'OpenStack Swift'
+    connectionCls = OpenStackSwiftConnection
 
-    def __init__(self, *args, **kwargs):
-        self._ex_region_name = kwargs.get('ex_region_name', 'RegionOne')
-        super(CloudFilesSwiftStorageDriver, self).__init__(*args, **kwargs)
+    # TODO: Reverse the relationship - Swift -> CloudFiles
 
-    def openstack_connection_kwargs(self):
-        rv = super(CloudFilesSwiftStorageDriver,
-                   self).openstack_connection_kwargs()
-        rv['ex_region_name'] = self._ex_region_name
-        return rv
-
-
-class CloudFilesUKStorageDriver(CloudFilesStorageDriver):
-    """
-    Cloudfiles storage driver for the UK endpoint.
-    """
-
-    type = Provider.CLOUDFILES_UK
-    name = 'CloudFiles (UK)'
-    _datacenter = 'lon'
+    def __init__(self, key, secret=None, secure=True, host=None, port=None,
+                 region=None, **kwargs):
+        super(OpenStackSwiftStorageDriver, self).__init__(key=key,
+                                                          secret=secret,
+                                                          secure=secure,
+                                                          host=host,
+                                                          port=port,
+                                                          region=region,
+                                                          **kwargs)
 
 
 class FileChunkReader(object):

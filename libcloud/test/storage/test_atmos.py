@@ -27,24 +27,23 @@ import libcloud.utils.files
 from libcloud.common.types import LibcloudError
 from libcloud.storage.base import Container, Object
 from libcloud.storage.types import ContainerAlreadyExistsError, \
-                                   ContainerDoesNotExistError, \
-                                   ContainerIsNotEmptyError, \
-                                   ObjectDoesNotExistError
+    ContainerDoesNotExistError, \
+    ContainerIsNotEmptyError, \
+    ObjectDoesNotExistError
 from libcloud.storage.drivers.atmos import AtmosConnection, AtmosDriver
 from libcloud.storage.drivers.dummy import DummyIterator
 
-from libcloud.test import StorageMockHttp, MockRawResponse
+from libcloud.test import MockHttp, generate_random_data, make_response
 from libcloud.test.file_fixtures import StorageFileFixtures
 
 
 class AtmosTests(unittest.TestCase):
+
     def setUp(self):
-        AtmosDriver.connectionCls.conn_classes = (None, AtmosMockHttp)
-        AtmosDriver.connectionCls.rawResponseCls = AtmosMockRawResponse
+        AtmosDriver.connectionCls.conn_class = AtmosMockHttp
         AtmosDriver.path = ''
         AtmosMockHttp.type = None
         AtmosMockHttp.upload_created = False
-        AtmosMockRawResponse.type = None
         self.driver = AtmosDriver('dummy', base64.b64encode(b('dummy')))
         self._remove_test_file()
 
@@ -92,7 +91,8 @@ class AtmosTests(unittest.TestCase):
                          'b21cb59a2ba339d1afdd4810010b0a5aba2ab6b9')
 
     def test_get_container_escaped(self):
-        container = self.driver.get_container(container_name='test & container')
+        container = self.driver.get_container(
+            container_name='test & container')
         self.assertEqual(container.name, 'test & container')
         self.assertEqual(container.extra['object_id'],
                          'b21cb59a2ba339d1afdd4810010b0a5aba2ab6b9')
@@ -187,6 +187,7 @@ class AtmosTests(unittest.TestCase):
             self.fail('Exception was not thrown')
 
     def test_delete_object_success(self):
+        AtmosMockHttp.type = 'DELETE'
         container = Container(name='foo_bar_container', extra={},
                               driver=self.driver)
         obj = Object(name='foo_bar_object', size=1000, hash=None, extra={},
@@ -196,6 +197,7 @@ class AtmosTests(unittest.TestCase):
         self.assertTrue(status)
 
     def test_delete_object_escaped_success(self):
+        AtmosMockHttp.type = 'DELETE'
         container = Container(name='foo & bar_container', extra={},
                               driver=self.driver)
         obj = Object(name='foo & bar_object', size=1000, hash=None, extra={},
@@ -245,7 +247,7 @@ class AtmosTests(unittest.TestCase):
         self.assertTrue(result)
 
     def test_download_object_success_not_found(self):
-        AtmosMockRawResponse.type = 'NOT_FOUND'
+        AtmosMockHttp.type = 'NOT_FOUND'
         container = Container(name='foo_bar_container', extra={},
                               driver=self.driver)
 
@@ -272,7 +274,8 @@ class AtmosTests(unittest.TestCase):
                      container=container, meta_data=None,
                      driver=self.driver)
 
-        stream = self.driver.download_object_as_stream(obj=obj, chunk_size=None)
+        stream = self.driver.download_object_as_stream(
+            obj=obj, chunk_size=None)
         self.assertTrue(hasattr(stream, '__iter__'))
 
     def test_download_object_as_stream_escaped(self):
@@ -282,16 +285,21 @@ class AtmosTests(unittest.TestCase):
                      container=container, meta_data=None,
                      driver=self.driver)
 
-        stream = self.driver.download_object_as_stream(obj=obj, chunk_size=None)
+        stream = self.driver.download_object_as_stream(
+            obj=obj, chunk_size=None)
         self.assertTrue(hasattr(stream, '__iter__'))
 
     def test_upload_object_success(self):
-        def upload_file(self, response, file_path, chunked=False,
-                     calculate_hash=True):
-            return True, 'hash343hhash89h932439jsaa89', 1000
+        def upload_file(self, object_name=None, content_type=None,
+                        request_path=None, request_method=None,
+                        headers=None, file_path=None, stream=None):
+            return {'response': make_response(200, headers={'etag': '0cc175b9c0f1b6a831c399e269772661'}),
+                    'bytes_transferred': 1000,
+                    'data_hash': '0cc175b9c0f1b6a831c399e269772661'}
 
-        old_func = AtmosDriver._upload_file
-        AtmosDriver._upload_file = upload_file
+        old_func = AtmosDriver._upload_object
+        AtmosDriver._upload_object = upload_file
+
         path = os.path.abspath(__file__)
         container = Container(name='fbc', extra={}, driver=self)
         object_name = 'ftu'
@@ -301,7 +309,7 @@ class AtmosTests(unittest.TestCase):
         self.assertEqual(obj.name, 'ftu')
         self.assertEqual(obj.size, 1000)
         self.assertTrue('some-value' in obj.meta_data)
-        AtmosDriver._upload_file = old_func
+        AtmosDriver._upload_object = old_func
 
     def test_upload_object_no_content_type(self):
         def no_content_type(name):
@@ -312,29 +320,26 @@ class AtmosTests(unittest.TestCase):
         file_path = os.path.abspath(__file__)
         container = Container(name='fbc', extra={}, driver=self)
         object_name = 'ftu'
-        try:
-            self.driver.upload_object(file_path=file_path, container=container,
-                                      object_name=object_name)
-        except AttributeError:
-            pass
-        else:
-            self.fail(
-                'File content type not provided'
-                ' but an exception was not thrown')
-        finally:
-            libcloud.utils.files.guess_file_mime_type = old_func
+        obj = self.driver.upload_object(file_path=file_path,
+                                        container=container,
+                                        object_name=object_name)
+
+        # Just check that the file was uploaded OK, as the fallback
+        # Content-Type header should be set (application/octet-stream).
+        self.assertEqual(obj.name, object_name)
+        libcloud.utils.files.guess_file_mime_type = old_func
 
     def test_upload_object_error(self):
         def dummy_content_type(name):
             return 'application/zip', None
 
-        def send(instance):
-            raise Exception('')
+        def send(self, method, **kwargs):
+            raise LibcloudError('')
 
         old_func1 = libcloud.utils.files.guess_file_mime_type
         libcloud.utils.files.guess_file_mime_type = dummy_content_type
-        old_func2 = AtmosMockHttp.send
-        AtmosMockHttp.send = send
+        old_func2 = AtmosMockHttp.request
+        AtmosMockHttp.request = send
 
         file_path = os.path.abspath(__file__)
         container = Container(name='fbc', extra={}, driver=self)
@@ -347,10 +352,11 @@ class AtmosTests(unittest.TestCase):
         except LibcloudError:
             pass
         else:
-            self.fail('Timeout while uploading but an exception was not thrown')
+            self.fail(
+                'Timeout while uploading but an exception was not thrown')
         finally:
             libcloud.utils.files.guess_file_mime_type = old_func1
-            AtmosMockHttp.send = old_func2
+            AtmosMockHttp.request = old_func2
 
     def test_upload_object_nonexistent_file(self):
         def dummy_content_type(name):
@@ -450,7 +456,7 @@ class AtmosTests(unittest.TestCase):
                 'zuHDEAgKM1winGnWn3WBsqnz4ks='),
             ('POST', '/rest/namespace/foo?metadata/user', '', {
                 'x-emc-meta': 'fakemeta=fake, othermeta=faketoo'
-             }, '7sLx1nxPIRAtocfv02jz9h1BjbU='),
+            }, '7sLx1nxPIRAtocfv02jz9h1BjbU='),
         ]
 
         class FakeDriver(object):
@@ -469,7 +475,7 @@ class AtmosTests(unittest.TestCase):
                              b(expected).decode('utf-8'))
 
 
-class AtmosMockHttp(StorageMockHttp, unittest.TestCase):
+class AtmosMockHttp(MockHttp, unittest.TestCase):
     fixtures = StorageFileFixtures('atmos')
     upload_created = False
     upload_stream_created = False
@@ -478,14 +484,15 @@ class AtmosMockHttp(StorageMockHttp, unittest.TestCase):
         unittest.TestCase.__init__(self)
 
         if kwargs.get('host', None) and kwargs.get('port', None):
-            StorageMockHttp.__init__(self, *args, **kwargs)
+            MockHttp.__init__(self, *args, **kwargs)
 
         self._upload_object_via_stream_first_request = True
 
     def runTest(self):
         pass
 
-    def request(self, method, url, body=None, headers=None, raw=False):
+    def request(self, method, url, body=None, headers=None, raw=False,
+                stream=False):
         headers = headers or {}
         parsed = urlparse.urlparse(url)
         if parsed.query.startswith('metadata/'):
@@ -512,15 +519,17 @@ class AtmosMockHttp(StorageMockHttp, unittest.TestCase):
         body = self.fixtures.load('list_containers.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _rest_namespace_test_container__metadata_system(self, method, url, body,
-                                                        headers):
+    def _rest_namespace_test_container__metadata_system(
+        self, method, url, body,
+            headers):
         headers = {
             'x-emc-meta': 'objectid=b21cb59a2ba339d1afdd4810010b0a5aba2ab6b9'
         }
         return (httplib.OK, '', headers, httplib.responses[httplib.OK])
 
-    def _rest_namespace_test_20_26_20container__metadata_system(self, method, url, body,
-                                                                headers):
+    def _rest_namespace_test_20_26_20container__metadata_system(
+        self, method, url, body,
+            headers):
         headers = {
             'x-emc-meta': 'objectid=b21cb59a2ba339d1afdd4810010b0a5aba2ab6b9'
         }
@@ -564,9 +573,10 @@ class AtmosMockHttp(StorageMockHttp, unittest.TestCase):
         return (httplib.BAD_REQUEST, body, {},
                 httplib.responses[httplib.BAD_REQUEST])
 
-    def _rest_namespace_test_container_test_object_metadata_system(self, method,
-                                                                   url, body,
-                                                                   headers):
+    def _rest_namespace_test_container_test_object_metadata_system(
+        self, method,
+        url, body,
+            headers):
         meta = {
             'objectid': '322dce3763aadc41acc55ef47867b8d74e45c31d6643',
             'size': '555',
@@ -577,9 +587,10 @@ class AtmosMockHttp(StorageMockHttp, unittest.TestCase):
         }
         return (httplib.OK, '', headers, httplib.responses[httplib.OK])
 
-    def _rest_namespace_test_20_26_20container_test_20_26_20object_metadata_system(self, method,
-                                                                                    url, body,
-                                                                                    headers):
+    def _rest_namespace_test_20_26_20container_test_20_26_20object_metadata_system(
+        self, method,
+        url, body,
+            headers):
         meta = {
             'objectid': '322dce3763aadc41acc55ef47867b8d74e45c31d6643',
             'size': '555',
@@ -603,9 +614,10 @@ class AtmosMockHttp(StorageMockHttp, unittest.TestCase):
         }
         return (httplib.OK, '', headers, httplib.responses[httplib.OK])
 
-    def _rest_namespace_test_20_26_20container_test_20_26_20object_metadata_user(self, method,
-                                                                                 url, body,
-                                                                                 headers):
+    def _rest_namespace_test_20_26_20container_test_20_26_20object_metadata_user(
+        self, method,
+        url, body,
+            headers):
         meta = {
             'md5': '6b21c4a111ac178feacf9ec9d0c71f17',
             'foo-bar': 'test 1',
@@ -623,17 +635,19 @@ class AtmosMockHttp(StorageMockHttp, unittest.TestCase):
         return (httplib.NOT_FOUND, body, {},
                 httplib.responses[httplib.NOT_FOUND])
 
-    def _rest_namespace_foo_bar_container_foo_bar_object(self, method, url,
-                                                         body, headers):
+    def _rest_namespace_foo_bar_container_foo_bar_object_DELETE(self, method, url,
+                                                                body, headers):
         return (httplib.OK, '', {}, httplib.responses[httplib.OK])
 
-    def _rest_namespace_foo_20_26_20bar_container_foo_20_26_20bar_object(self, method, url,
-                                                                         body, headers):
+    def _rest_namespace_foo_20_26_20bar_container_foo_20_26_20bar_object_DELETE(
+        self, method, url,
+            body, headers):
         return (httplib.OK, '', {}, httplib.responses[httplib.OK])
 
-    def _rest_namespace_foo_bar_container_foo_bar_object_NOT_FOUND(self, method,
-                                                                   url, body,
-                                                                   headers):
+    def _rest_namespace_foo_bar_container_foo_bar_object_NOT_FOUND(
+        self, method,
+        url, body,
+            headers):
         body = self.fixtures.load('not_found.xml')
         return (httplib.NOT_FOUND, body, {},
                 httplib.responses[httplib.NOT_FOUND])
@@ -733,26 +747,16 @@ class AtmosMockHttp(StorageMockHttp, unittest.TestCase):
         }
         return (httplib.OK, '', headers, httplib.responses[httplib.OK])
 
-
-class AtmosMockRawResponse(MockRawResponse):
-    fixtures = StorageFileFixtures('atmos')
-
     def _rest_namespace_foo_bar_container_foo_bar_object(self, method, url,
                                                          body, headers):
-        body = self._generate_random_data(1000)
+        body = generate_random_data(1000)
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _rest_namespace_foo_20_26_20bar_container_foo_20_26_20bar_object(self, method, url,
-                                                                         body, headers):
-        body = self._generate_random_data(1000)
+    def _rest_namespace_foo_20_26_20bar_container_foo_20_26_20bar_object(
+        self, method, url,
+            body, headers):
+        body = generate_random_data(1000)
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
-
-    def _rest_namespace_foo_bar_container_foo_bar_object_NOT_FOUND(self, method,
-                                                                   url, body,
-                                                                   headers):
-        body = self.fixtures.load('not_found.xml')
-        return (httplib.NOT_FOUND, body, {},
-                httplib.responses[httplib.NOT_FOUND])
 
     def _rest_namespace_fbc_ftu(self, method, url, body, headers):
         return (httplib.CREATED, '', {}, httplib.responses[httplib.CREATED])

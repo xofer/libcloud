@@ -26,9 +26,9 @@ from libcloud.test.secrets import HOSTVIRTUAL_PARAMS
 
 
 class HostVirtualTest(unittest.TestCase):
+
     def setUp(self):
-        HostVirtualNodeDriver.connectionCls.conn_classes = (
-            None, HostVirtualMockHttp)
+        HostVirtualNodeDriver.connectionCls.conn_class = HostVirtualMockHttp
         self.driver = HostVirtualNodeDriver(*HOSTVIRTUAL_PARAMS)
 
     def test_list_nodes(self):
@@ -45,9 +45,9 @@ class HostVirtualTest(unittest.TestCase):
 
     def test_list_sizes(self):
         sizes = self.driver.list_sizes()
-        self.assertEqual(len(sizes), 10)
-        self.assertEqual(sizes[0].id, 'VR256')
-        self.assertEqual(sizes[4].id, 'VR1024')
+        self.assertEqual(len(sizes), 14)
+        self.assertEqual(sizes[0].id, '31')
+        self.assertEqual(sizes[4].id, '71')
         self.assertEqual(sizes[2].ram, '512MB')
         self.assertEqual(sizes[2].disk, '20GB')
         self.assertEqual(sizes[3].bandwidth, '600GB')
@@ -64,23 +64,55 @@ class HostVirtualTest(unittest.TestCase):
         self.assertEqual(locations[0].id, '3')
         self.assertEqual(locations[0].name, 'SJC - San Jose, CA')
         self.assertEqual(locations[1].id, '13')
-        self.assertEqual(locations[1].name, 'IAD2- Reston, VA')
+        self.assertEqual(locations[1].name, 'IAD - Reston, VA')
 
     def test_reboot_node(self):
         node = self.driver.list_nodes()[0]
         self.assertTrue(self.driver.reboot_node(node))
 
-    def test_stop_node(self):
+    def test_ex_get_node(self):
+        node = self.driver.ex_get_node(node_id='62291')
+        self.assertEqual(node.id, '62291')
+        self.assertEqual(node.name, 'server1.vr-cluster.org')
+        self.assertEqual(node.state, NodeState.TERMINATED)
+        self.assertTrue('208.111.45.250' in node.public_ips)
+
+    def test_ex_list_packages(self):
+        pkgs = self.driver.ex_list_packages()
+        self.assertEqual(len(pkgs), 3)
+        self.assertEqual(pkgs[1]['mbpkgid'], '176018')
+        self.assertEqual(pkgs[2]['package_status'], 'Suspended')
+
+    def test_ex_order_package(self):
+        sizes = self.driver.list_sizes()
+        pkg = self.driver.ex_order_package(sizes[0])
+        self.assertEqual(pkg['id'], '62291')
+
+    def test_ex_cancel_package(self):
+        node = self.driver.list_nodes()[0]
+        result = self.driver.ex_cancel_package(node)
+        self.assertEqual(result['status'], 'success')
+
+    def test_ex_unlink_package(self):
+        node = self.driver.list_nodes()[0]
+        result = self.driver.ex_unlink_package(node)
+        self.assertEqual(result['status'], 'success')
+
+    def test_ex_stop_node(self):
         node = self.driver.list_nodes()[0]
         self.assertTrue(self.driver.ex_stop_node(node))
 
-    def test_start_node(self):
+    def test_ex_start_node(self):
         node = self.driver.list_nodes()[0]
         self.assertTrue(self.driver.ex_start_node(node))
 
     def test_destroy_node(self):
         node = self.driver.list_nodes()[0]
         self.assertTrue(self.driver.destroy_node(node))
+
+    def test_ex_delete_node(self):
+        node = self.driver.list_nodes()[0]
+        self.assertTrue(self.driver.ex_delete_node(node))
 
     def test_create_node(self):
         auth = NodeAuthPassword('vr!@#hosted#@!')
@@ -92,8 +124,16 @@ class HostVirtualTest(unittest.TestCase):
             size=size,
             auth=auth
         )
-        self.assertEqual('76070', node.id)
-        self.assertEqual('test.com', node.name)
+        self.assertEqual('62291', node.id)
+        self.assertEqual('server1.vr-cluster.org', node.name)
+
+    def test_ex_provision_node(self):
+        node = self.driver.list_nodes()[0]
+        auth = NodeAuthPassword('vr!@#hosted#@!')
+        self.assertTrue(self.driver.ex_provision_node(
+            node=node,
+            auth=auth
+        ))
 
     def test_create_node_in_location(self):
         auth = NodeAuthPassword('vr!@#hosted#@!')
@@ -107,48 +147,69 @@ class HostVirtualTest(unittest.TestCase):
             auth=auth,
             location=location
         )
-        self.assertEqual('76070', node.id)
-        self.assertEqual('test.com', node.name)
+        self.assertEqual('62291', node.id)
+        self.assertEqual('server1.vr-cluster.org', node.name)
 
 
 class HostVirtualMockHttp(MockHttp):
     fixtures = ComputeFileFixtures('hostvirtual')
 
-    def _vapi_cloud_servers(self, method, url, body, headers):
+    def _cloud_servers(self, method, url, body, headers):
         body = self.fixtures.load('list_nodes.json')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _vapi_cloud_sizes(self, method, url, body, headers):
+    def _cloud_server(self, method, url, body, headers):
+        body = self.fixtures.load('get_node.json')
+        return (httplib.OK, body, {}, httplib.responses[httplib.OK])
+
+    def _cloud_packages(self, method, url, body, headers):
+        body = self.fixtures.load('list_packages.json')
+        return (httplib.OK, body, {}, httplib.responses[httplib.OK])
+
+    def _cloud_sizes(self, method, url, body, headers):
         body = self.fixtures.load('list_sizes.json')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _vapi_cloud_images(self, method, url, body, headers):
+    def _cloud_images(self, method, url, body, headers):
         body = self.fixtures.load('list_images.json')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _vapi_cloud_locations(self, method, url, body, headers):
+    def _cloud_locations(self, method, url, body, headers):
         body = self.fixtures.load('list_locations.json')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _vapi_cloud_cancel(self, method, url, body, headers):
-        body = self.fixtures.load('node_destroy.json')
+    def _cloud_server_delete(self, method, url, body, headers):
+        body = self.fixtures.load('cancel_package.json')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _vapi_cloud_server_reboot(self, method, url, body, headers):
+    def _cloud_server_reboot(self, method, url, body, headers):
         body = self.fixtures.load('node_reboot.json')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _vapi_cloud_server_stop(self, method, url, body, headers):
+    def _cloud_server_shutdown(self, method, url, body, headers):
         body = self.fixtures.load('node_stop.json')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _vapi_cloud_server_start(self, method, url, body, headers):
+    def _cloud_server_start(self, method, url, body, headers):
         body = self.fixtures.load('node_start.json')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _vapi_cloud_buy_build(self, method, url, body, headers):
-        body = self.fixtures.load('create_node.json')
+    def _cloud_server_build(self, method, url, body, headers):
+        body = self.fixtures.load('order_package.json')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
+
+    def _cloud_buy(self, method, url, body, headers):
+        body = self.fixtures.load('order_package.json')
+        return (httplib.OK, body, {}, httplib.responses[httplib.OK])
+
+    def _cloud_cancel(self, method, url, body, headers):
+        body = self.fixtures.load('cancel_package.json')
+        return (httplib.OK, body, {}, httplib.responses[httplib.OK])
+
+    def _cloud_unlink(self, method, url, body, headers):
+        body = self.fixtures.load('unlink_package.json')
+        return (httplib.OK, body, {}, httplib.responses[httplib.OK])
+
 
 if __name__ == '__main__':
     sys.exit(unittest.main())

@@ -16,21 +16,21 @@ __all__ = [
     'HostVirtualDNSDriver'
 ]
 
-from libcloud.utils.py3 import httplib
-from libcloud.utils.misc import merge_valid_keys, get_new_obj
-from libcloud.common.hostvirtual import HostVirtualResponse
-from libcloud.common.hostvirtual import HostVirtualConnection
-from libcloud.compute.drivers.hostvirtual import API_ROOT
-from libcloud.compute.drivers.hostvirtual import HostVirtualConnection
-from libcloud.compute.drivers.hostvirtual import HostVirtualResponse
-from libcloud.dns.types import Provider, RecordType
-from libcloud.dns.types import ZoneDoesNotExistError, RecordDoesNotExistError
-from libcloud.dns.base import DNSDriver, Zone, Record
+import sys
 
 try:
     import simplejson as json
 except:
     import json
+
+from libcloud.utils.py3 import httplib
+from libcloud.utils.misc import merge_valid_keys, get_new_obj
+from libcloud.common.hostvirtual import HostVirtualResponse
+from libcloud.common.hostvirtual import HostVirtualConnection
+from libcloud.compute.drivers.hostvirtual import API_ROOT
+from libcloud.dns.types import Provider, RecordType
+from libcloud.dns.types import ZoneDoesNotExistError, RecordDoesNotExistError
+from libcloud.dns.base import DNSDriver, Zone, Record
 
 VALID_RECORD_EXTRA_PARAMS = ['prio', 'ttl']
 
@@ -42,11 +42,13 @@ class HostVirtualDNSResponse(HostVirtualResponse):
 
         if status == httplib.NOT_FOUND:
             if context['resource'] == 'zone':
-                raise ZoneDoesNotExistError(value='', driver=self,
-                                            zone_id=context['id'])
+                raise ZoneDoesNotExistError(
+                    value=self.parse_body()['error']['message'],
+                    driver=self, zone_id=context['id'])
             elif context['resource'] == 'record':
-                raise RecordDoesNotExistError(value='', driver=self,
-                                              record_id=context['id'])
+                raise RecordDoesNotExistError(
+                    value=self.parse_body()['error']['message'],
+                    driver=self, record_id=context['id'])
 
         super(HostVirtualDNSResponse, self).parse_error()
         return self.body
@@ -59,7 +61,7 @@ class HostVirtualDNSConnection(HostVirtualConnection):
 class HostVirtualDNSDriver(DNSDriver):
     type = Provider.HOSTVIRTUAL
     name = 'Host Virtual DNS'
-    website = 'http://www.vr.org/'
+    website = 'https://www.hostvirtual.com/'
     connectionCls = HostVirtualDNSConnection
 
     RECORD_TYPE_MAP = {
@@ -67,10 +69,14 @@ class HostVirtualDNSDriver(DNSDriver):
         RecordType.AAAA: 'AAAA',
         RecordType.CNAME: 'CNAME',
         RecordType.MX: 'MX',
-        RecordType.TXT: 'TXT',
         RecordType.NS: 'SPF',
         RecordType.SRV: 'SRV',
+        RecordType.TXT: 'TXT',
     }
+
+    def __init__(self, key, secure=True, host=None, port=None):
+        super(HostVirtualDNSDriver, self).__init__(key=key, secure=secure,
+                                                   host=host, port=port)
 
     def _to_zones(self, items):
         zones = []
@@ -99,9 +105,11 @@ class HostVirtualDNSDriver(DNSDriver):
     def _to_record(self, item, zone=None):
         extra = {'ttl': item['ttl']}
         type = self._string_to_record_type(item['type'])
-        record = Record(id=item['id'], name=item['name'],
+        name = item['name'][:-len(zone.domain) - 1]
+        record = Record(id=item['id'], name=name,
                         type=type, data=item['content'],
-                        zone=zone, driver=self, extra=extra)
+                        zone=zone, driver=self, ttl=item['ttl'],
+                        extra=extra)
         return record
 
     def list_zones(self):
@@ -111,10 +119,16 @@ class HostVirtualDNSDriver(DNSDriver):
         return zones
 
     def list_records(self, zone):
-        params = {'zone_id': zone.id}
+        params = {'id': zone.id}
         self.connection.set_context({'resource': 'zone', 'id': zone.id})
-        result = self.connection.request(
-            API_ROOT + '/dns/records/', data=json.dumps(params)).object
+        try:
+            result = self.connection.request(
+                API_ROOT + '/dns/records/', params=params).object
+        except ZoneDoesNotExistError:
+            e = sys.exc_info()[1]
+            if 'Not Found: No Records Found' in e.value:
+                return []
+            raise e
         records = self._to_records(items=result, zone=zone)
         return records
 
@@ -141,7 +155,7 @@ class HostVirtualDNSDriver(DNSDriver):
         return record
 
     def delete_zone(self, zone):
-        params = {'zone_id': zone.id}
+        params = {'id': zone.id}
         self.connection.set_context({'resource': 'zone', 'id': zone.id})
         result = self.connection.request(
             API_ROOT + '/dns/zone/', params=params, method='DELETE').object
@@ -209,7 +223,9 @@ class HostVirtualDNSDriver(DNSDriver):
             data=json.dumps(params), method='POST').object
         record = Record(id=result['id'], name=name,
                         type=type, data=data,
-                        extra=merged, zone=zone, driver=self)
+                        extra=merged, zone=zone,
+                        ttl=merged.get('ttl', None),
+                        driver=self)
         return record
 
     def update_record(self, record, name=None, type=None,

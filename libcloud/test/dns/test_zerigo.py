@@ -29,8 +29,7 @@ from libcloud.test.secrets import DNS_PARAMS_ZERIGO
 
 class ZerigoTests(unittest.TestCase):
     def setUp(self):
-        ZerigoDNSDriver.connectionCls.conn_classes = (
-                None, ZerigoMockHttp)
+        ZerigoDNSDriver.connectionCls.conn_class = ZerigoMockHttp
         ZerigoMockHttp.type = None
         self.driver = ZerigoDNSDriver(*DNS_PARAMS_ZERIGO)
 
@@ -65,11 +64,24 @@ class ZerigoTests(unittest.TestCase):
         zone = self.driver.list_zones()[0]
         records = list(self.driver.list_records(zone=zone))
 
-        self.assertEqual(len(records), 1)
+        self.assertEqual(len(records), 4)
         self.assertEqual(records[0].name, 'www')
         self.assertEqual(records[0].type, RecordType.A)
         self.assertEqual(records[0].data, '172.16.16.1')
         self.assertEqual(records[0].extra['fqdn'], 'www.example.com')
+        self.assertEqual(records[0].extra['notes'], None)
+        self.assertEqual(records[0].extra['priority'], None)
+
+        self.assertEqual(records[1].name, 'test')
+        self.assertEqual(records[1].extra['ttl'], 3600)
+
+    def test_record_with_empty_name(self):
+        zone = self.driver.list_zones()[0]
+        record1 = list(self.driver.list_records(zone=zone))[-1]
+        record2 = list(self.driver.list_records(zone=zone))[-2]
+
+        self.assertEqual(record1.name, None)
+        self.assertEqual(record2.name, None)
 
     def test_list_records_no_results(self):
         zone = self.driver.list_zones()[0]
@@ -131,7 +143,7 @@ class ZerigoTests(unittest.TestCase):
 
         try:
             self.driver.get_record(zone_id='12345678',
-                                            record_id='28536')
+                                   record_id='28536')
         except RecordDoesNotExistError:
             pass
         else:
@@ -258,7 +270,7 @@ class ZerigoMockHttp(MockHttp):
 
     def _api_1_1_zones_xml(self, method, url, body, headers):
         body = self.fixtures.load('list_zones.xml')
-        return (httplib.OK, body, {'x-query-count': 1},
+        return (httplib.OK, body, {'x-query-count': '1'},
                 httplib.responses[httplib.OK])
 
     def _api_1_1_zones_xml_NO_RESULTS(self, method, url, body, headers):
@@ -267,13 +279,13 @@ class ZerigoMockHttp(MockHttp):
 
     def _api_1_1_zones_12345678_hosts_xml(self, method, url, body, headers):
         body = self.fixtures.load('list_records.xml')
-        return (httplib.OK, body, {'x-query-count': 1},
+        return (httplib.OK, body, {'x-query-count': '1'},
                 httplib.responses[httplib.OK])
 
     def _api_1_1_zones_12345678_hosts_xml_NO_RESULTS(self, method, url, body,
                                                      headers):
         body = self.fixtures.load('list_records_no_results.xml')
-        return (httplib.OK, body, {'x-query-count': 0},
+        return (httplib.OK, body, {'x-query-count': '0'},
                 httplib.responses[httplib.OK])
 
     def _api_1_1_zones_12345678_hosts_xml_ZONE_DOES_NOT_EXIST(self, method,

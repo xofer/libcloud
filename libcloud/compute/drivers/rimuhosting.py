@@ -24,7 +24,7 @@ from libcloud.common.base import ConnectionKey, JsonResponse
 from libcloud.common.types import InvalidCredsError
 from libcloud.compute.types import Provider, NodeState
 from libcloud.compute.base import NodeDriver, NodeSize, Node, NodeLocation
-from libcloud.compute.base import NodeImage, NodeAuthPassword
+from libcloud.compute.base import NodeImage
 
 API_CONTEXT = '/r'
 API_HOST = 'rimuhosting.com'
@@ -43,16 +43,9 @@ class RimuHostingException(Exception):
 
 
 class RimuHostingResponse(JsonResponse):
-    def __init__(self, response, connection):
-        self.body = response.read()
-        self.status = response.status
-        self.headers = dict(response.getheaders())
-        self.error = response.reason
-        self.connection = connection
-
-        if self.success():
-            self.object = self.parse_body()
-
+    """
+    Response Class for RimuHosting driver
+    """
     def success(self):
         if self.status == 403:
             raise InvalidCredsError()
@@ -82,9 +75,11 @@ class RimuHostingConnection(ConnectionKey):
     port = 443
     responseCls = RimuHostingResponse
 
-    def __init__(self, key, secure=True):
+    def __init__(self, key, secure=True, retry_delay=None,
+                 backoff=None, timeout=None):
         # override __init__ so that we can set secure of False for testing
-        ConnectionKey.__init__(self, key, secure)
+        ConnectionKey.__init__(self, key, secure, timeout=timeout,
+                               retry_delay=retry_delay, backoff=backoff)
 
     def add_default_headers(self, headers):
         # We want JSON back from the server. Could be application/xml
@@ -116,26 +111,27 @@ class RimuHostingNodeDriver(NodeDriver):
     name = 'RimuHosting'
     website = 'http://rimuhosting.com/'
     connectionCls = RimuHostingConnection
+    features = {'create_node': ['password']}
 
     def __init__(self, key, host=API_HOST, port=443,
                  api_context=API_CONTEXT, secure=True):
         """
-        @param    key: API key (required)
-        @type     key: C{str}
+        :param    key: API key (required)
+        :type     key: ``str``
 
-        @param    host: hostname for connection
-        @type     host: C{str}
+        :param    host: hostname for connection
+        :type     host: ``str``
 
-        @param    port: Override port used for connections.
-        @type     port: C{int}
+        :param    port: Override port used for connections.
+        :type     port: ``int``
 
-        @param    api_context: Optional API context.
-        @type     api_context: C{str}
+        :param    api_context: Optional API context.
+        :type     api_context: ``str``
 
-        @param    secure: Weither to use HTTPS or HTTP.
-        @type     secure: C{bool}
+        :param    secure: Whether to use HTTPS or HTTP.
+        :type     secure: ``bool``
 
-        @rtype: C{None}
+        :rtype: ``None``
         """
         # Pass in some extra vars so that
         self.key = key
@@ -157,9 +153,8 @@ class RimuHostingNodeDriver(NodeDriver):
                  name=order['domain_name'],
                  state=NodeState.RUNNING,
                  public_ips=(
-                     [order['allocated_ips']['primary_ip']]
-                     + order['allocated_ips']['secondary_ips']
-                 ),
+                     [order['allocated_ips']['primary_ip']] +
+                     order['allocated_ips']['secondary_ips']),
                  private_ips=[],
                  driver=self.connection.driver,
                  extra={
@@ -230,41 +225,41 @@ class RimuHostingNodeDriver(NodeDriver):
     def create_node(self, **kwargs):
         """Creates a RimuHosting instance
 
-        @inherits: L{NodeDriver.create_node}
+        @inherits: :class:`NodeDriver.create_node`
 
-        @keyword    name: Must be a FQDN. e.g example.com.
-        @type       name: C{str}
+        :keyword    name: Must be a FQDN. e.g example.com.
+        :type       name: ``str``
 
-        @keyword    ex_billing_oid: If not set,
+        :keyword    ex_billing_oid: If not set,
                                     a billing method is automatically picked.
-        @type       ex_billing_oid: C{str}
+        :type       ex_billing_oid: ``str``
 
-        @keyword    ex_host_server_oid: The host server to set the VPS up on.
-        @type       ex_host_server_oid: C{str}
+        :keyword    ex_host_server_oid: The host server to set the VPS up on.
+        :type       ex_host_server_oid: ``str``
 
-        @keyword    ex_vps_order_oid_to_clone: Clone another VPS to use as
+        :keyword    ex_vps_order_oid_to_clone: Clone another VPS to use as
                                                 the image for the new VPS.
-        @type       ex_vps_order_oid_to_clone: C{str}
+        :type       ex_vps_order_oid_to_clone: ``str``
 
-        @keyword    ex_num_ips: Number of IPs to allocate. Defaults to 1.
-        @type       ex_num_ips: C{int}
+        :keyword    ex_num_ips: Number of IPs to allocate. Defaults to 1.
+        :type       ex_num_ips: ``int``
 
-        @keyword    ex_extra_ip_reason: Reason for needing the extra IPs.
-        @type       ex_extra_ip_reason: C{str}
+        :keyword    ex_extra_ip_reason: Reason for needing the extra IPs.
+        :type       ex_extra_ip_reason: ``str``
 
-        @keyword    ex_memory_mb: Memory to allocate to the VPS.
-        @type       ex_memory_mb: C{int}
+        :keyword    ex_memory_mb: Memory to allocate to the VPS.
+        :type       ex_memory_mb: ``int``
 
-        @keyword    ex_disk_space_mb: Diskspace to allocate to the VPS.
+        :keyword    ex_disk_space_mb: Diskspace to allocate to the VPS.
             Defaults to 4096 (4GB).
-        @type       ex_disk_space_mb: C{int}
+        :type       ex_disk_space_mb: ``int``
 
-        @keyword    ex_disk_space_2_mb: Secondary disk size allocation.
+        :keyword    ex_disk_space_2_mb: Secondary disk size allocation.
                                         Disabled by default.
-        @type       ex_disk_space_2_mb: C{int}
+        :type       ex_disk_space_2_mb: ``int``
 
-        @keyword    ex_control_panel: Control panel to install on the VPS.
-        @type       ex_control_panel: C{str}
+        :keyword    ex_control_panel: Control panel to install on the VPS.
+        :type       ex_control_panel: ``str``
         """
         # Note we don't do much error checking in this because we
         # expect the API to error out if there is a problem.
@@ -274,23 +269,22 @@ class RimuHostingNodeDriver(NodeDriver):
 
         data = {
             'instantiation_options': {
-                'domain_name': name, 'distro': image.id
+                'domain_name': name,
+                'distro': image.id
             },
             'pricing_plan_code': size.id,
+            'vps_parameters': {}
         }
 
         if 'ex_control_panel' in kwargs:
             data['instantiation_options']['control_panel'] = \
                 kwargs['ex_control_panel']
 
-        if 'auth' in kwargs:
-            auth = kwargs['auth']
-            if not isinstance(auth, NodeAuthPassword):
-                raise ValueError('auth must be of NodeAuthPassword type')
-            data['instantiation_options']['password'] = auth.password
+        auth = self._get_and_check_auth(kwargs.get('auth'))
+        data['instantiation_options']['password'] = auth.password
 
         if 'ex_billing_oid' in kwargs:
-            #TODO check for valid oid.
+            # TODO check for valid oid.
             data['billing_oid'] = kwargs['ex_billing_oid']
 
         if 'ex_host_server_oid' in kwargs:
@@ -301,32 +295,30 @@ class RimuHostingNodeDriver(NodeDriver):
                 kwargs['ex_vps_order_oid_to_clone']
 
         if 'ex_num_ips' in kwargs and int(kwargs['ex_num_ips']) > 1:
-            if not 'ex_extra_ip_reason' in kwargs:
+            if 'ex_extra_ip_reason' not in kwargs:
                 raise RimuHostingException(
                     'Need an reason for having an extra IP')
             else:
-                if not 'ip_request' in data:
+                if 'ip_request' not in data:
                     data['ip_request'] = {}
                 data['ip_request']['num_ips'] = int(kwargs['ex_num_ips'])
                 data['ip_request']['extra_ip_reason'] = \
                     kwargs['ex_extra_ip_reason']
 
         if 'ex_memory_mb' in kwargs:
-            if not 'vps_parameters' in data:
-                data['vps_parameters'] = {}
             data['vps_parameters']['memory_mb'] = kwargs['ex_memory_mb']
 
         if 'ex_disk_space_mb' in kwargs:
-            if not 'ex_vps_parameters' in data:
-                data['vps_parameters'] = {}
             data['vps_parameters']['disk_space_mb'] = \
                 kwargs['ex_disk_space_mb']
 
         if 'ex_disk_space_2_mb' in kwargs:
-            if not 'vps_parameters' in data:
-                data['vps_parameters'] = {}
             data['vps_parameters']['disk_space_2_mb'] =\
                 kwargs['ex_disk_space_2_mb']
+
+        # Don't send empty 'vps_parameters' attribute
+        if not data['vps_parameters']:
+            del data['vps_parameters']
 
         res = self.connection.request(
             '/orders/new-vps',
@@ -345,5 +337,3 @@ class RimuHostingNodeDriver(NodeDriver):
             NodeLocation('DCLONDON', "RimuHosting London", 'GB', self),
             NodeLocation('DCSYDNEY', "RimuHosting Sydney", 'AU', self),
         ]
-
-    features = {"create_node": ["password"]}

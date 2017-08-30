@@ -17,16 +17,36 @@ from libcloud.common.base import ConnectionKey, BaseDriver
 from libcloud.common.types import LibcloudError
 
 __all__ = [
-    "Member",
-    "LoadBalancer",
-    "Driver",
-    "Algorithm"
+    'Member',
+    'LoadBalancer',
+    'Algorithm',
+    'Driver',
+    'DEFAULT_ALGORITHM'
 ]
 
 
 class Member(object):
+    """
+    Represents a load balancer member.
+    """
 
     def __init__(self, id, ip, port, balancer=None, extra=None):
+        """
+        :param id: Member ID.
+        :type id: ``str``
+
+        :param ip: IP address of this member.
+        :param ip: ``str``
+
+        :param port: Port of this member
+        :param port: ``str``
+
+        :param balancer: Balancer this member is attached to. (optional)
+        :param balancer: :class:`.LoadBalancer`
+
+        :param extra: Provider specific attributes.
+        :type extra: ``dict``
+        """
         self.id = str(id) if id else None
         self.ip = ip
         self.port = port
@@ -38,25 +58,34 @@ class Member(object):
                                                     self.ip, self.port))
 
 
-class Algorithm(object):
-    RANDOM = 0
-    ROUND_ROBIN = 1
-    LEAST_CONNECTIONS = 2
-    WEIGHTED_ROUND_ROBIN = 3
-    WEIGHTED_LEAST_CONNECTIONS = 4
-
-DEFAULT_ALGORITHM = Algorithm.ROUND_ROBIN
-
-
 class LoadBalancer(object):
     """
     Provide a common interface for handling Load Balancers.
     """
 
-    name = None
-    website = None
-
     def __init__(self, id, name, state, ip, port, driver, extra=None):
+        """
+        :param id: Load balancer ID.
+        :type id: ``str``
+
+        :param name: Load balancer name.
+        :type name: ``str``
+
+        :param state: State this loadbalancer is in.
+        :type state: :class:`libcloud.loadbalancer.types.State`
+
+        :param ip: IP address of this loadbalancer.
+        :type ip: ``str``
+
+        :param port: Port of this loadbalancer.
+        :type port: ``int``
+
+        :param driver: Driver this loadbalancer belongs to.
+        :type driver: :class:`.Driver`
+
+        :param extra: Provider specific attributes. (optional)
+        :type extra: ``dict``
+        """
         self.id = str(id) if id else None
         self.name = name
         self.state = state
@@ -84,17 +113,36 @@ class LoadBalancer(object):
         return self.driver.destroy_balancer(balancer=self)
 
     def __repr__(self):
-        return ('<LoadBalancer: id=%s, name=%s, state=%s>' % (self.id,
-                self.name, self.state))
+        return ('<LoadBalancer: id=%s, name=%s, state=%s, ip=%s, '
+                'port=%s>' % (self.id, self.name, self.state, self.ip,
+                              self.port))
+
+
+class Algorithm(object):
+    """
+    Represents a load balancing algorithm.
+    """
+
+    RANDOM = 0
+    ROUND_ROBIN = 1
+    LEAST_CONNECTIONS = 2
+    WEIGHTED_ROUND_ROBIN = 3
+    WEIGHTED_LEAST_CONNECTIONS = 4
+    SHORTEST_RESPONSE = 5
+    PERSISTENT_IP = 6
+
+DEFAULT_ALGORITHM = Algorithm.ROUND_ROBIN
 
 
 class Driver(BaseDriver):
     """
-    A base LBDriver class to derive from
+    A base Driver class to derive from
 
     This class is always subclassed by a specific driver.
-
     """
+
+    name = None
+    website = None
 
     connectionCls = ConnectionKey
     _ALGORITHM_TO_VALUE_MAP = {}
@@ -109,7 +157,7 @@ class Driver(BaseDriver):
         """
         Return a list of supported protocols.
 
-        @rtype: C{list} of C{str}
+        :rtype: ``list`` of ``str``
         """
         raise NotImplementedError(
             'list_protocols not implemented for this driver')
@@ -118,7 +166,7 @@ class Driver(BaseDriver):
         """
         List all loadbalancers
 
-        @rtype: C{list} of L{LoadBalancer}
+        :rtype: ``list`` of :class:`LoadBalancer`
         """
         raise NotImplementedError(
             'list_balancers not implemented for this driver')
@@ -127,34 +175,35 @@ class Driver(BaseDriver):
         """
         Create a new load balancer instance
 
-        @param name: Name of the new load balancer (required)
-        @type  name: C{str}
+        :param name: Name of the new load balancer (required)
+        :type  name: ``str``
 
-        @param port: Port the load balancer should listen on, defaults to 80
-        @type  port: C{str}
+        :param port: Port the load balancer should listen on, defaults to 80
+        :type  port: ``str``
 
-        @param protocol: Loadbalancer protocol, defaults to http.
-        @type  protocol: C{str}
+        :param protocol: Loadbalancer protocol, defaults to http.
+        :type  protocol: ``str``
 
-        @param members: list of Members to attach to balancer
-        @type  members: C{list} of L{Member}
+        :param members: list of Members to attach to balancer
+        :type  members: ``list`` of :class:`Member`
 
-        @param algorithm: Load balancing algorithm, defaults to ROUND_ROBIN
-        @type algorithm: L{Algorithm}
+        :param algorithm: Load balancing algorithm, defaults to ROUND_ROBIN.
+        :type algorithm: :class:`.Algorithm`
 
-        @rtype: L{LoadBalancer}
+        :rtype: :class:`LoadBalancer`
         """
         raise NotImplementedError(
             'create_balancer not implemented for this driver')
 
     def destroy_balancer(self, balancer):
-        """Destroy a load balancer
+        """
+        Destroy a load balancer
 
-        @param balancer: LoadBalancer which should be used
-        @type  balancer: L{LoadBalancer}
+        :param balancer: LoadBalancer which should be used
+        :type  balancer: :class:`LoadBalancer`
 
-        @return: True if the destroy was successful, otherwise False
-        @rtype: C{bool}
+        :return: ``True`` if the destroy was successful, otherwise ``False``.
+        :rtype: ``bool``
         """
 
         raise NotImplementedError(
@@ -162,12 +211,12 @@ class Driver(BaseDriver):
 
     def get_balancer(self, balancer_id):
         """
-        Return a L{LoadBalancer} object.
+        Return a :class:`LoadBalancer` object.
 
-        @param balancer_id: id of a load balancer you want to fetch
-        @type  balancer_id: C{str}
+        :param balancer_id: id of a load balancer you want to fetch
+        :type  balancer_id: ``str``
 
-        @rtype: L{LoadBalancer}
+        :rtype: :class:`LoadBalancer`
         """
 
         raise NotImplementedError(
@@ -177,22 +226,22 @@ class Driver(BaseDriver):
         """
         Sets the name, algorithm, protocol, or port on a load balancer.
 
-        @param   balancer: LoadBalancer which should be used
-        @type    balancer: L{LoadBalancer}
+        :param   balancer: LoadBalancer which should be used
+        :type    balancer: :class:`LoadBalancer`
 
-        @keyword name: New load balancer name
-        @type    name: C{str}
+        :param name: New load balancer name
+        :type    name: ``str``
 
-        @keyword algorithm: New load balancer algorithm
-        @type    algorithm: L{Algorithm}
+        :param algorithm: New load balancer algorithm
+        :type    algorithm: :class:`.Algorithm`
 
-        @keyword protocol: New load balancer protocol
-        @type    protocol: C{str}
+        :param protocol: New load balancer protocol
+        :type    protocol: ``str``
 
-        @keyword port: New load balancer port
-        @type    port: C{int}
+        :param port: New load balancer port
+        :type    port: ``int``
 
-        @rtype: L{LoadBalancer}
+        :rtype: :class:`LoadBalancer`
         """
         raise NotImplementedError(
             'update_balancer not implemented for this driver')
@@ -201,32 +250,31 @@ class Driver(BaseDriver):
         """
         Attach a compute node as a member to the load balancer.
 
-        @param balancer: LoadBalancer which should be used
-        @type  balancer: L{LoadBalancer}
+        :param balancer: LoadBalancer which should be used
+        :type  balancer: :class:`LoadBalancer`
 
-        @param node: Node to join to the balancer
-        @type  node: L{Node}
+        :param node: Node to join to the balancer
+        :type  node: :class:`Node`
 
-        @return: Member after joining the balancer.
-        @rtype: L{Member}
+        :return: Member after joining the balancer.
+        :rtype: :class:`Member`
         """
 
-        return self.balancer_attach_member(balancer, Member(id=None,
-                                                            ip=node.public_ips[0],
-                                                            port=balancer.port))
+        member = Member(id=None, ip=node.public_ips[0], port=balancer.port)
+        return self.balancer_attach_member(balancer, member)
 
     def balancer_attach_member(self, balancer, member):
         """
         Attach a member to balancer
 
-        @param balancer: LoadBalancer which should be used
-        @type  balancer: L{LoadBalancer}
+        :param balancer: LoadBalancer which should be used
+        :type  balancer: :class:`LoadBalancer`
 
-        @param member: Member to join to the balancer
-        @type member: L{Member}
+        :param member: Member to join to the balancer
+        :type member: :class:`Member`
 
-        @return: Member after joining the balancer.
-        @rtype: L{Member}
+        :return: Member after joining the balancer.
+        :rtype: :class:`Member`
         """
 
         raise NotImplementedError(
@@ -236,14 +284,14 @@ class Driver(BaseDriver):
         """
         Detach member from balancer
 
-        @param balancer: LoadBalancer which should be used
-        @type  balancer: L{LoadBalancer}
+        :param balancer: LoadBalancer which should be used
+        :type  balancer: :class:`LoadBalancer`
 
-        @param member: Member which should be used
-        @type member: L{Member}
+        :param member: Member which should be used
+        :type member: :class:`Member`
 
-        @return: True if member detach was successful, otherwise False
-        @rtype: C{bool}
+        :return: ``True`` if member detach was successful, otherwise ``False``.
+        :rtype: ``bool``
         """
 
         raise NotImplementedError(
@@ -253,18 +301,31 @@ class Driver(BaseDriver):
         """
         Return list of members attached to balancer
 
-        @param balancer: LoadBalancer which should be used
-        @type  balancer: L{LoadBalancer}
+        :param balancer: LoadBalancer which should be used
+        :type  balancer: :class:`LoadBalancer`
 
-        @rtype: C{list} of L{Member}
+        :rtype: ``list`` of :class:`Member`
         """
 
         raise NotImplementedError(
             'balancer_list_members not implemented for this driver')
 
+    def list_supported_algorithms(self):
+        """
+        Return algorithms supported by this driver.
+
+        :rtype: ``list`` of ``str``
+        """
+        return list(self._ALGORITHM_TO_VALUE_MAP.keys())
+
     def _value_to_algorithm(self, value):
         """
-        Return C{LBAlgorithm} based on the value.
+        Return :class:`.Algorithm` based on the value.
+
+        :param value: Algorithm name (e.g. http, tcp, ...).
+        :type  value: ``str``
+
+        :rtype: :class:`.Algorithm`
         """
         try:
             return self._VALUE_TO_ALGORITHM_MAP[value]
@@ -274,18 +335,15 @@ class Driver(BaseDriver):
 
     def _algorithm_to_value(self, algorithm):
         """
-        Return value based in the algorithm (C{LBAlgorithm}).
+        Return string value for the provided algorithm.
+
+        :param value: Algorithm enum.
+        :type  value: :class:`Algorithm`
+
+        :rtype: ``str``
         """
         try:
             return self._ALGORITHM_TO_VALUE_MAP[algorithm]
         except KeyError:
             raise LibcloudError(value='Invalid algorithm: %s' % (algorithm),
                                 driver=self)
-
-    def list_supported_algorithms(self):
-        """
-        Return algorithms supported by this driver.
-
-        @rtype: C{list} of C{str}
-        """
-        return list(self._ALGORITHM_TO_VALUE_MAP.keys())

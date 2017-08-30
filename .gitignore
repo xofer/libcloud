@@ -11,3 +11,15 @@ MANIFEST
 /.coverage
 coverage_html_report/
 .idea
+dist/*apache-libcloud*
+dist/*apache_libcloud*
+docs/apidocs/*
+_build/
+apache_libcloud.egg-info/
+.project
+.pydevproject
+.settings
+.DS_Store
+.eggs/
+.cache/
+.vscode/

@@ -211,8 +211,6 @@ class AtmosDriver(StorageDriver):
 
     def upload_object(self, file_path, container, object_name, extra=None,
                       verify_hash=True):
-        upload_func = self._upload_file
-        upload_func_kwargs = {'file_path': file_path}
         method = 'PUT'
 
         extra = extra or {}
@@ -232,8 +230,6 @@ class AtmosDriver(StorageDriver):
         result_dict = self._upload_object(
             object_name=object_name,
             content_type=content_type,
-            upload_func=upload_func,
-            upload_func_kwargs=upload_func_kwargs,
             request_path=request_path,
             request_method=method,
             headers={}, file_path=file_path)
@@ -387,18 +383,18 @@ class AtmosDriver(StorageDriver):
 
     def get_object_cdn_url(self, obj, expiry=None, use_object=False):
         """
-        Return a object CDN URL.
+        Return an object CDN URL.
 
-        @param obj: Object instance
-        @type  obj: L{Object}
+        :param obj: Object instance
+        :type  obj: :class:`Object`
 
-        @param expiry: Expiry
-        @type expiry: C{str}
+        :param expiry: Expiry
+        :type expiry: ``str``
 
-        @param use_object: Use object
-        @type use_object: C{bool}
+        :param use_object: Use object
+        :type use_object: ``bool``
 
-        @rtype: C{str}
+        :rtype: ``str``
         """
         if use_object:
             path = '/rest/objects' + obj.meta_data['object_id']
@@ -467,7 +463,6 @@ class AtmosDriver(StorageDriver):
         path = self._namespace_path(container.name) + '/'
         result = self.connection.request(path, headers=headers)
         entries = self._list_objects(result.object, object_type='regular')
-        objects = []
         for entry in entries:
             metadata = {'object_id': entry['id']}
             yield Object(entry['name'], 0, '', {}, metadata, container, self)

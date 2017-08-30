@@ -87,6 +87,8 @@ class LinodeDNSDriver(DNSDriver):
 
     def get_zone(self, zone_id):
         params = {'api_action': 'domain.list', 'DomainID': zone_id}
+        self.connection.set_context(context={'resource': 'zone',
+                                             'id': zone_id})
         data = self.connection.request(API_ROOT, params=params).objects[0]
         zones = self._to_zones(data)
 
@@ -99,6 +101,8 @@ class LinodeDNSDriver(DNSDriver):
         zone = self.get_zone(zone_id=zone_id)
         params = {'api_action': 'domain.resource.list', 'DomainID': zone_id,
                   'ResourceID': record_id}
+        self.connection.set_context(context={'resource': 'record',
+                                             'id': record_id})
         data = self.connection.request(API_ROOT, params=params).objects[0]
         records = self._to_records(items=data, zone=zone)
 
@@ -113,8 +117,6 @@ class LinodeDNSDriver(DNSDriver):
         Create a new zone.
 
         API docs: http://www.linode.com/api/dns/domain.create
-
-        @inherits: C{DNSDriver.create_zone}
         """
         params = {'api_action': 'domain.create', 'Type': type,
                   'Domain': domain}
@@ -135,8 +137,6 @@ class LinodeDNSDriver(DNSDriver):
         Update an existing zone.
 
         API docs: http://www.linode.com/api/dns/domain.update
-
-        @inherits: C{DNSDriver.update_zone}
         """
         params = {'api_action': 'domain.update', 'DomainID': zone.id}
 
@@ -164,8 +164,6 @@ class LinodeDNSDriver(DNSDriver):
         Create a new record.
 
         API docs: http://www.linode.com/api/dns/domain.resource.create
-
-        @inherits: C{DNSDriver.create_record}
         """
         params = {'api_action': 'domain.resource.create', 'DomainID': zone.id,
                   'Name': name, 'Target': data,
@@ -176,7 +174,8 @@ class LinodeDNSDriver(DNSDriver):
 
         result = self.connection.request(API_ROOT, params=params).objects[0]
         record = Record(id=result['ResourceID'], name=name, type=type,
-                        data=data, extra=merged, zone=zone, driver=self)
+                        data=data, extra=merged, zone=zone, driver=self,
+                        ttl=merged.get('TTL_sec', None))
         return record
 
     def update_record(self, record, name=None, type=None, data=None,
@@ -185,8 +184,6 @@ class LinodeDNSDriver(DNSDriver):
         Update an existing record.
 
         API docs: http://www.linode.com/api/dns/domain.resource.update
-
-        @inherits: C{DNSDriver.update_record}
         """
         params = {'api_action': 'domain.resource.update',
                   'ResourceID': record.id, 'DomainID': record.zone.id}
@@ -268,9 +265,10 @@ class LinodeDNSDriver(DNSDriver):
         Build a Record object from the item dictionary.
         """
         extra = {'protocol': item['PROTOCOL'], 'ttl_sec': item['TTL_SEC'],
-                 'port': item['PORT'], 'weight': item['WEIGHT']}
+                 'port': item['PORT'], 'weight': item['WEIGHT'],
+                 'priority': item['PRIORITY']}
         type = self._string_to_record_type(item['TYPE'])
         record = Record(id=item['RESOURCEID'], name=item['NAME'], type=type,
                         data=item['TARGET'], zone=zone, driver=self,
-                        extra=extra)
+                        ttl=item['TTL_SEC'], extra=extra)
         return record

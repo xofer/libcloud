@@ -20,7 +20,7 @@
 import os
 import fnmatch
 
-# Names that are exluded from globbing results:
+# Names that are excluded from globbing results:
 EXCLUDE_NAMES = ['{arch}', 'CVS', '.cvsignore', '_darcs',
                  'RCS', 'SCCS', '.svn']
 EXCLUDE_PATTERNS = ['*.py[cdo]', '*.s[ol]', '.#*', '*~', '*.py']
@@ -36,9 +36,9 @@ def _filter_names(names):
     # copy (likely a checkout) rather than a pristine export:
     for pattern in EXCLUDE_PATTERNS:
         names = [n for n in names
-                 if (not fnmatch.fnmatch(n, pattern))
-                 and (not n.endswith('.py'))]
+                 if not fnmatch.fnmatch(n, pattern) and not n.endswith('.py')]
     return names
+
 
 def relative_to(base, relativee):
     """
@@ -48,7 +48,7 @@ def relative_to(base, relativee):
 
     >>> relative_to('/home/', '/home/radix/')
     'radix'
-    >>> relative_to('.', '/home/radix/Projects/Twisted') # curdir is /home/radix
+    >>> relative_to('.', '/home/radix/Projects/Twisted')
     'Projects/Twisted'
 
     The 'relativee' must be a child of 'basepath'.
@@ -61,6 +61,7 @@ def relative_to(base, relativee):
             relative = relative[1:]
         return os.path.join(base, relative)
     raise ValueError("%s is not a subpath of %s" % (relativee, basepath))
+
 
 def get_packages(dname, pkgname=None, results=None, ignore=None, parent=None):
     """
@@ -87,8 +88,8 @@ def get_packages(dname, pkgname=None, results=None, ignore=None, parent=None):
         results.append(prefix + pkgname + [bname])
         for subdir in filter(os.path.isdir, abssubfiles):
             get_packages(subdir, pkgname=pkgname + [bname],
-                        results=results, ignore=ignore,
-                        parent=parent)
+                         results=results, ignore=ignore,
+                         parent=parent)
     res = ['.'.join(result) for result in results]
     return res
 

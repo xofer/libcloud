@@ -20,7 +20,7 @@ import hmac
 try:
     import simplejson as json
 except ImportError:
-    import json
+    import json  # NOQA
 
 from libcloud.utils.py3 import httplib
 from libcloud.utils.py3 import urlencode
@@ -41,7 +41,7 @@ class NimbusResponse(JsonResponse):
         if self.status in [httplib.UNAUTHORIZED]:
             raise InvalidCredsError(self.body)
         raise LibcloudError('Unknown error. Status code: %d' % (self.status),
-                            driver=self.driver)
+                            driver=self.connection.driver)
 
 
 class NimbusConnection(ConnectionUserAndKey):
@@ -79,7 +79,7 @@ class NimbusConnection(ConnectionUserAndKey):
 
 
 class NimbusStorageDriver(StorageDriver):
-    name = 'Nimbus'
+    name = 'Nimbus.io'
     website = 'https://nimbus.io/'
     connectionCls = NimbusConnection
 
@@ -89,13 +89,13 @@ class NimbusStorageDriver(StorageDriver):
 
     def iterate_containers(self):
         response = self.connection.request('/customers/%s/collections' %
-                                           (self.connection.user_id))
+                                           (self.user_id))
         return self._to_containers(response.object)
 
     def create_container(self, container_name):
         params = {'action': 'create', 'name': container_name}
         response = self.connection.request('/customers/%s/collections' %
-                                           (self.connection.user_id),
+                                           (self.user_id),
                                            params=params,
                                            method='POST')
         return self._to_container(response.object)

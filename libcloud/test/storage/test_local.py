@@ -21,25 +21,23 @@ import shutil
 import unittest
 import tempfile
 
-from libcloud.utils.py3 import httplib
+import mock
 
-from libcloud.common.types import InvalidCredsError
 from libcloud.common.types import LibcloudError
-from libcloud.storage.base import Container, Object
+from libcloud.storage.base import Container
 from libcloud.storage.types import ContainerDoesNotExistError
 from libcloud.storage.types import ContainerAlreadyExistsError
 from libcloud.storage.types import ContainerIsNotEmptyError
 from libcloud.storage.types import InvalidContainerNameError
-from libcloud.storage.types import ObjectDoesNotExistError
-from libcloud.storage.types import ObjectHashMismatchError
 
 try:
     from libcloud.storage.drivers.local import LocalStorageDriver
+    from libcloud.storage.drivers.local import LockLocalStorage
+    from lockfile import LockTimeout
 except ImportError:
     print('lockfile library is not available, skipping local_storage tests...')
     LocalStorageDriver = None
-
-from libcloud.storage.drivers.dummy import DummyIterator
+    LockTimeout = None
 
 
 class LocalTests(unittest.TestCase):
@@ -59,10 +57,8 @@ class LocalTests(unittest.TestCase):
 
     def make_tmp_file(self):
         _, tmppath = tempfile.mkstemp()
-
-        with open(tmppath, 'w') as fp:
-            fp.write('blah' * 1024)
-
+        with open(tmppath, 'wb') as fp:
+            fp.write(b'blah' * 1024)
         return tmppath
 
     def remove_tmp_file(self, tmppath):
@@ -95,14 +91,14 @@ class LocalTests(unittest.TestCase):
 
     def test_objects_success(self):
         tmppath = self.make_tmp_file()
-        tmpfile = open(tmppath)
 
         container = self.driver.create_container('test3')
         obj1 = container.upload_object(tmppath, 'object1')
         obj2 = container.upload_object(tmppath, 'path/object2')
         obj3 = container.upload_object(tmppath, 'path/to/object3')
         obj4 = container.upload_object(tmppath, 'path/to/object4.ext')
-        obj5 = container.upload_object_via_stream(tmpfile, 'object5')
+        with open(tmppath, 'rb') as tmpfile:
+            obj5 = container.upload_object_via_stream(tmpfile, 'object5')
 
         objects = self.driver.list_container_objects(container=container)
         self.assertEqual(len(objects), 5)
@@ -129,7 +125,6 @@ class LocalTests(unittest.TestCase):
         self.assertEqual(len(objects), 0)
 
         container.delete()
-        tmpfile.close()
         self.remove_tmp_file(tmppath)
 
     def test_get_container_doesnt_exist(self):
@@ -308,19 +303,24 @@ class LocalTests(unittest.TestCase):
 
         self.assertTrue(hasattr(stream, '__iter__'))
 
-        data = ''
-        for buff in stream:
-            data += buff
-
+        data = b''.join(stream)
         self.assertTrue(len(data), 4096)
 
         obj.delete()
         container.delete()
         self.remove_tmp_file(tmppath)
 
+    @mock.patch("lockfile.mkdirlockfile.MkdirLockFile.acquire",
+                mock.MagicMock(side_effect=LockTimeout))
+    def test_proper_lockfile_imports(self):
+        # LockLocalStorage was previously using an un-imported exception
+        # in its __enter__ method, so the following would raise a NameError.
+        lls = LockLocalStorage("blah")
+        self.assertRaises(LibcloudError, lls.__enter__)
+
 
 if not LocalStorageDriver:
-    class LocalTests(unittest.TestCase):
+    class LocalTests(unittest.TestCase):  # NOQA
         pass
 
 

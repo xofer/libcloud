@@ -32,11 +32,9 @@ from libcloud.test.secrets import GRIDSPOT_PARAMS
 
 
 class GridspotTest(unittest.TestCase, TestCaseMixin):
+
     def setUp(self):
-        GridspotNodeDriver.connectionCls.conn_classes = (
-            None,
-            GridspotMockHttp
-        )
+        GridspotNodeDriver.connectionCls.conn_class = GridspotMockHttp
         GridspotMockHttp.type = None
         self.driver = GridspotNodeDriver(*GRIDSPOT_PARAMS)
 
@@ -45,12 +43,7 @@ class GridspotTest(unittest.TestCase, TestCaseMixin):
         Tests the error-handling for passing a bad API Key to the Gridspot API
         """
         GridspotMockHttp.type = 'BAD_AUTH'
-        try:
-            self.driver.list_nodes()
-             # Above command should have thrown an InvalidCredsException
-            self.assertTrue(False)
-        except InvalidCredsError:
-            self.assertTrue(True)
+        self.assertRaises(InvalidCredsError, self.driver.list_nodes)
 
     def test_list_nodes(self):
         nodes = self.driver.list_nodes()
@@ -67,8 +60,8 @@ class GridspotTest(unittest.TestCase, TestCaseMixin):
         self.assertEqual(running_node.extra['start_state_time'], 1342108905)
         self.assertEqual(running_node.extra['vm_num_logical_cores'], 8)
         self.assertEqual(running_node.extra['vm_num_physical_cores'], 4)
-        self.assertEqual(running_node.extra['winning_bid_id'],\
-                'bid_X5xhotGYiGUk7_RmIqVafA')
+        self.assertEqual(running_node.extra['winning_bid_id'],
+                         'bid_X5xhotGYiGUk7_RmIqVafA')
         self.assertFalse('ended_state_time' in running_node.extra)
         self.assertEqual(running_node.extra['running_state_time'], 1342108989)
 
@@ -80,8 +73,8 @@ class GridspotTest(unittest.TestCase, TestCaseMixin):
         self.assertEqual(starting_node.extra['start_state_time'], 1342108906)
         self.assertEqual(starting_node.extra['vm_num_logical_cores'], 7)
         self.assertEqual(starting_node.extra['vm_num_physical_cores'], 5)
-        self.assertEqual(starting_node.extra['winning_bid_id'],\
-                'bid_X5xhotGYiGUk7_RmIqVafA1')
+        self.assertEqual(starting_node.extra['winning_bid_id'],
+                         'bid_X5xhotGYiGUk7_RmIqVafA1')
         self.assertFalse('ended_state_time' in starting_node.extra)
         self.assertEqual(starting_node.extra['running_state_time'], 1342108990)
 
@@ -89,7 +82,7 @@ class GridspotTest(unittest.TestCase, TestCaseMixin):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_destroy_node(self):
         """
@@ -103,88 +96,89 @@ class GridspotTest(unittest.TestCase, TestCaseMixin):
         Gridspot does not fail a destroy node unless the parameters are bad, in
         which case it 404s
         """
-        self.assertTrue(True)
+        pass
 
     def test_reboot_node(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_reboot_node_failure(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_resize_node(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_reboot_node_response(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_list_images_response(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_create_node_response(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_destroy_node_response(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_list_sizes_response(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_resize_node_failure(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_list_images(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_list_sizes(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_list_locations(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
     def test_list_locations_response(self):
         """
         Gridspot does not implement this functionality
         """
-        self.assertTrue(True)
+        pass
 
 
 class GridspotMockHttp(MockHttp):
+
     def _compute_api_v1_list_instances_BAD_AUTH(self, method, url, body,
                                                 headers):
         return (httplib.NOT_FOUND, "", {},
@@ -192,33 +186,33 @@ class GridspotMockHttp(MockHttp):
 
     def _compute_api_v1_list_instances(self, method, url, body, headers):
         body = json.dumps({
-          "instances": [
-            {
-              "instance_id": "inst_CP2WrQi2WIS4iheyAVkQYw",
-              "vm_num_logical_cores": 8,
-              "vm_num_physical_cores": 4,
-              "winning_bid_id": "bid_X5xhotGYiGUk7_RmIqVafA",
-              "vm_ram": 1429436743,
-              "start_state_time": 1342108905,
-              "vm_ssh_wan_ip_endpoint": "69.4.239.74:62394",
-              "current_state": "Running",
-              "ended_state_time": "null",
-              "running_state_time": 1342108989
-            },
-            {
-              "instance_id": "inst_CP2WrQi2WIS4iheyAVkQYw2",
-              "vm_num_logical_cores": 7,
-              "vm_num_physical_cores": 5,
-              "winning_bid_id": "bid_X5xhotGYiGUk7_RmIqVafA1",
-              "vm_ram": 1429436744,
-              "start_state_time": 1342108906,
-              "vm_ssh_wan_ip_endpoint": "69.4.239.74:62395",
-              "current_state": "Starting",
-              "ended_state_time": "null",
-              "running_state_time": 1342108990
-            }
-          ],
-          "exception_name": ""
+            "instances": [
+                {
+                    "instance_id": "inst_CP2WrQi2WIS4iheyAVkQYw",
+                    "vm_num_logical_cores": 8,
+                    "vm_num_physical_cores": 4,
+                    "winning_bid_id": "bid_X5xhotGYiGUk7_RmIqVafA",
+                    "vm_ram": 1429436743,
+                    "start_state_time": 1342108905,
+                    "vm_ssh_wan_ip_endpoint": "69.4.239.74:62394",
+                    "current_state": "Running",
+                    "ended_state_time": "null",
+                    "running_state_time": 1342108989
+                },
+                {
+                    "instance_id": "inst_CP2WrQi2WIS4iheyAVkQYw2",
+                    "vm_num_logical_cores": 7,
+                    "vm_num_physical_cores": 5,
+                    "winning_bid_id": "bid_X5xhotGYiGUk7_RmIqVafA1",
+                    "vm_ram": 1429436744,
+                    "start_state_time": 1342108906,
+                    "vm_ssh_wan_ip_endpoint": "69.4.239.74:62395",
+                    "current_state": "Starting",
+                    "ended_state_time": "null",
+                    "running_state_time": 1342108990
+                }
+            ],
+            "exception_name": ""
         })
 
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])

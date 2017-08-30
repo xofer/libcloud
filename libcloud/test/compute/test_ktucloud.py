@@ -18,33 +18,27 @@ import unittest
 
 from libcloud.utils.py3 import httplib
 from libcloud.utils.py3 import urlparse
+from libcloud.utils.py3 import parse_qsl
 
 try:
     import simplejson as json
 except ImportError:
     import json
 
-try:
-    parse_qsl = urlparse.parse_qsl
-except AttributeError:
-    import cgi
-    parse_qsl = cgi.parse_qsl
-
 from libcloud.compute.drivers.ktucloud import KTUCloudNodeDriver
-from libcloud.compute.types import DeploymentError, LibcloudError
 
-from libcloud.test import MockHttpTestCase
+from libcloud.test import MockHttp
 from libcloud.test.compute import TestCaseMixin
 from libcloud.test.file_fixtures import ComputeFileFixtures
 
 
 class KTUCloudNodeDriverTest(unittest.TestCase, TestCaseMixin):
+
     def setUp(self):
-        KTUCloudNodeDriver.connectionCls.conn_classes = \
-            (None, KTUCloudStackMockHttp)
+        KTUCloudNodeDriver.connectionCls.conn_class = KTUCloudStackMockHttp
         self.driver = KTUCloudNodeDriver('apikey', 'secret',
-                                           path='/test/path',
-                                           host='api.dummy.com')
+                                         path='/test/path',
+                                         host='api.dummy.com')
         self.driver.path = '/test/path'
         self.driver.type = -1
         KTUCloudStackMockHttp.fixture_tag = 'default'
@@ -54,30 +48,49 @@ class KTUCloudNodeDriverTest(unittest.TestCase, TestCaseMixin):
         size = self.driver.list_sizes()[0]
         image = self.driver.list_images()[0]
         KTUCloudStackMockHttp.fixture_tag = 'deployfail'
-        try:
-            self.driver.create_node(name='node-name', image=image, size=size)
-        except:
-            return
-        self.assertTrue(False)
+        self.assertRaises(
+            Exception,
+            self.driver.create_node,
+            name='node-name', image=image, size=size)
 
     def test_create_node_delayed_failure(self):
         size = self.driver.list_sizes()[0]
         image = self.driver.list_images()[0]
         KTUCloudStackMockHttp.fixture_tag = 'deployfail2'
-        try:
-            self.driver.create_node(name='node-name', image=image, size=size)
-        except:
-            return
-        self.assertTrue(False)
+        self.assertRaises(
+            Exception,
+            self.driver.create_node,
+            name='node-name', image=image, size=size)
 
     def test_list_images_no_images_available(self):
         KTUCloudStackMockHttp.fixture_tag = 'notemplates'
 
         images = self.driver.list_images()
-        self.assertEquals(0, len(images))
+        self.assertEqual(0, len(images))
+
+    def test_list_images_available(self):
+        images = self.driver.list_images()
+        self.assertEqual(112, len(images))
+
+    def test_list_sizes_available(self):
+        sizes = self.driver.list_sizes()
+        self.assertEqual(112, len(sizes))
+
+    def test_list_sizes_nodisk(self):
+        KTUCloudStackMockHttp.fixture_tag = 'nodisk'
+
+        sizes = self.driver.list_sizes()
+        self.assertEqual(2, len(sizes))
+
+        check = False
+        size = sizes[1]
+        if size.id == KTUCloudNodeDriver.EMPTY_DISKOFFERINGID:
+            check = True
+
+        self.assertTrue(check)
 
 
-class KTUCloudStackMockHttp(MockHttpTestCase):
+class KTUCloudStackMockHttp(MockHttp, unittest.TestCase):
     fixtures = ComputeFileFixtures('ktucloud')
     fixture_tag = 'default'
 
@@ -106,12 +119,12 @@ class KTUCloudStackMockHttp(MockHttpTestCase):
         else:
             fixture = command + '_' + self.fixture_tag + '.json'
             body, obj = self._load_fixture(fixture)
-            return (httplib.OK, body, obj, httplib.responses[httplib.OK])
+            return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
     def _cmd_queryAsyncJobResult(self, jobid):
         fixture = 'queryAsyncJobResult' + '_' + str(jobid) + '.json'
         body, obj = self._load_fixture(fixture)
-        return (httplib.OK, body, obj, httplib.responses[httplib.OK])
+        return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
 if __name__ == '__main__':
     sys.exit(unittest.main())

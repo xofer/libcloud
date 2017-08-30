@@ -21,15 +21,14 @@ from libcloud.loadbalancer.base import Member, Algorithm
 from libcloud.loadbalancer.drivers.brightbox import BrightboxLBDriver
 from libcloud.loadbalancer.types import State
 
-from libcloud.test import MockHttpTestCase
+from libcloud.test import MockHttp
 from libcloud.test.secrets import LB_BRIGHTBOX_PARAMS
 from libcloud.test.file_fixtures import LoadBalancerFileFixtures
 
 
 class BrightboxLBTests(unittest.TestCase):
     def setUp(self):
-        BrightboxLBDriver.connectionCls.conn_classes = (None,
-                                                        BrightboxLBMockHttp)
+        BrightboxLBDriver.connectionCls.conn_class = BrightboxLBMockHttp
         BrightboxLBMockHttp.type = None
         self.driver = BrightboxLBDriver(*LB_BRIGHTBOX_PARAMS)
 
@@ -43,16 +42,16 @@ class BrightboxLBTests(unittest.TestCase):
     def test_list_balancers(self):
         balancers = self.driver.list_balancers()
 
-        self.assertEquals(len(balancers), 1)
-        self.assertEquals(balancers[0].id, 'lba-1235f')
-        self.assertEquals(balancers[0].name, 'lb1')
+        self.assertEqual(len(balancers), 1)
+        self.assertEqual(balancers[0].id, 'lba-1235f')
+        self.assertEqual(balancers[0].name, 'lb1')
 
     def test_get_balancer(self):
         balancer = self.driver.get_balancer(balancer_id='lba-1235f')
 
-        self.assertEquals(balancer.id, 'lba-1235f')
-        self.assertEquals(balancer.name, 'lb1')
-        self.assertEquals(balancer.state, State.RUNNING)
+        self.assertEqual(balancer.id, 'lba-1235f')
+        self.assertEqual(balancer.name, 'lb1')
+        self.assertEqual(balancer.state, State.RUNNING)
 
     def test_destroy_balancer(self):
         balancer = self.driver.get_balancer(balancer_id='lba-1235f')
@@ -63,26 +62,28 @@ class BrightboxLBTests(unittest.TestCase):
         members = [Member('srv-lv426', None, None)]
 
         balancer = self.driver.create_balancer(name='lb2', port=80,
-            protocol='http', algorithm=Algorithm.ROUND_ROBIN, members=members)
+                                               protocol='http',
+                                               algorithm=Algorithm.ROUND_ROBIN,
+                                               members=members)
 
-        self.assertEquals(balancer.name, 'lb2')
-        self.assertEquals(balancer.port, 80)
-        self.assertEquals(balancer.state, State.PENDING)
+        self.assertEqual(balancer.name, 'lb2')
+        self.assertEqual(balancer.port, 80)
+        self.assertEqual(balancer.state, State.PENDING)
 
     def test_balancer_list_members(self):
         balancer = self.driver.get_balancer(balancer_id='lba-1235f')
         members = balancer.list_members()
 
-        self.assertEquals(len(members), 1)
-        self.assertEquals(members[0].balancer, balancer)
-        self.assertEquals('srv-lv426', members[0].id)
+        self.assertEqual(len(members), 1)
+        self.assertEqual(members[0].balancer, balancer)
+        self.assertEqual('srv-lv426', members[0].id)
 
     def test_balancer_attach_member(self):
         balancer = self.driver.get_balancer(balancer_id='lba-1235f')
         member = balancer.attach_member(Member('srv-kg983', ip=None,
                                                port=None))
 
-        self.assertEquals(member.id, 'srv-kg983')
+        self.assertEqual(member.id, 'srv-kg983')
 
     def test_balancer_detach_member(self):
         balancer = self.driver.get_balancer(balancer_id='lba-1235f')
@@ -91,41 +92,43 @@ class BrightboxLBTests(unittest.TestCase):
         self.assertTrue(balancer.detach_member(member))
 
 
-class BrightboxLBMockHttp(MockHttpTestCase):
+class BrightboxLBMockHttp(MockHttp):
     fixtures = LoadBalancerFileFixtures('brightbox')
 
     def _token(self, method, url, body, headers):
         if method == 'POST':
-            return self.response(httplib.OK, self.fixtures.load('token.json'))
+            return (httplib.OK, self.fixtures.load('token.json'), {'content-type': 'application/json'},
+                    httplib.responses[httplib.OK])
 
     def _1_0_load_balancers(self, method, url, body, headers):
         if method == 'GET':
-            return self.response(httplib.OK,
-                                 self.fixtures.load('load_balancers.json'))
+            return (httplib.OK, self.fixtures.load('load_balancers.json'), {'content-type': 'application/json'},
+                    httplib.responses[httplib.OK])
         elif method == 'POST':
             body = self.fixtures.load('load_balancers_post.json')
-            return self.response(httplib.ACCEPTED, body)
+            return (httplib.ACCEPTED, body, {'content-type': 'application/json'},
+                    httplib.responses[httplib.ACCEPTED])
 
     def _1_0_load_balancers_lba_1235f(self, method, url, body, headers):
         if method == 'GET':
             body = self.fixtures.load('load_balancers_lba_1235f.json')
-            return self.response(httplib.OK, body)
+            return (httplib.OK, body, {'content-type': 'application/json'},
+                    httplib.responses[httplib.OK])
         elif method == 'DELETE':
-            return self.response(httplib.ACCEPTED, '')
+            return (httplib.ACCEPTED, '', {'content-type': 'application/json'},
+                    httplib.responses[httplib.ACCEPTED])
 
     def _1_0_load_balancers_lba_1235f_add_nodes(self, method, url, body,
                                                 headers):
         if method == 'POST':
-            return self.response(httplib.ACCEPTED, '')
+            return (httplib.ACCEPTED, '', {'content-type': 'application/json'},
+                    httplib.responses[httplib.ACCEPTED])
 
     def _1_0_load_balancers_lba_1235f_remove_nodes(self, method, url, body,
                                                    headers):
         if method == 'POST':
-            return self.response(httplib.ACCEPTED, '')
-
-    def response(self, status, body):
-        return (status, body, {'content-type': 'application/json'},
-                httplib.responses[status])
+            return (httplib.ACCEPTED, '', {'content-type': 'application/json'},
+                    httplib.responses[httplib.ACCEPTED])
 
 
 if __name__ == "__main__":
